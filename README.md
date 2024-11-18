@@ -1,5 +1,11 @@
 # TCC
-Code for supporting Course Completion Monograph
+Code for supporting Course Completion Thesis
+
+https://www.overleaf.com/project/66756f7949fa86f5621092dd - main document
+
+https://docs.google.com/spreadsheets/d/1Ei4KCWnIAcxXeuaU7s_CjdYAXi2lLIhsc_yA3M1kWf8/edit?gid=0#gid=0 - related documents
+
+https://docs.google.com/spreadsheets/d/1-JDm41Z7ekAmB6yn_b-J0OSfbQO-CdqjbCHCk1QTmv4/edit?usp=sharing - Reading list
 
 ## Testing code
 
