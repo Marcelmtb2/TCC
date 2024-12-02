@@ -9,10 +9,14 @@ while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
         break
-
+    frame = cv2.resize(frame, None, fx=0.25, fy=0.25, interpolation=cv2.INTER_AREA)
     keypoints_frame, descriptors_frame = orb.detectAndCompute(frame, None)
 
     # Matcher para encontrar correspondências entre as características
+    # Desenhar os pontos de interesse na imagem
+    img_with_keypoints = cv2.drawKeypoints(frame, keypoints_frame, None, color=(0, 255, 0), flags=0)
+    print(descriptors_template)
+    print(descriptors_frame)
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf.match(descriptors_template, descriptors_frame)
     matches = sorted(matches, key=lambda x: x.distance)

@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-cap = cv2.VideoCapture(r"video\video.mp4")
+cap = cv2.VideoCapture(r"video\teste.mp4")
 ret, frame = cap.read()
 x, y, w, h = 200, 150, 50, 50  # Inicialize a área de rastreamento
 track_window = (x, y, w, h)
@@ -31,7 +31,7 @@ while cap.isOpened():
 
     cv2.imshow('Camshift Tracking', img2)
 
-    if cv2.waitKey(30) & 0xFF == ord('q'):
+    if cv2.waitKey(130) & 0xFF == ord('q'):
         break
 
 cap.release()
