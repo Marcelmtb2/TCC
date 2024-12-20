@@ -11,8 +11,7 @@ https://docs.google.com/spreadsheets/d/1-JDm41Z7ekAmB6yn_b-J0OSfbQO-CdqjbCHCk1QT
 
 - Background subtraction
 - Contour Detection
-- HSV Histogram
-- Feature Matching?
+- HSV Histogram 
 
 ## Journal
 
