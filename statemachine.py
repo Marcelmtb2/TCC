@@ -2,11 +2,13 @@
 from transitions import Machine
 import random
 
-class NarcolepticSuperhero(object):
+class ObjectTracking(object):
 
     # Define some states. Most of the time, narcoleptic superheroes are just like
     # everyone else. Except for...
-    states = ['asleep', 'hanging out', 'hungry', 'sweaty', 'saving the world']
+    # states = ['asleep', 'hanging out', 'hungry', 'sweaty', 'saving the world']
+    states = ['inicial', 'monitorar', 'objeto_encontrado', 'objeto_parado',
+              'objeto_livre', 'objeto_coberto', 'objeto_cortado', ]
 
     def __init__(self, name):
 
@@ -18,7 +20,8 @@ class NarcolepticSuperhero(object):
         self.kittens_rescued = 0
 
         # Initialize the state machine
-        self.machine = Machine(model=self, states=NarcolepticSuperhero.states, initial='asleep')
+        self.machine = Machine(model=self, states=ObjectTracking.states,
+                               initial='inicial')
 
         # Add some transitions. We could also define these using a static list of
         # dictionaries, as we did with states above, and then pass the list to
@@ -65,7 +68,7 @@ class NarcolepticSuperhero(object):
         print("Beauty, eh?")
 
 if __name__ == "__main__":
-    batman = NarcolepticSuperhero("Batman")
+    batman = ObjectTracking("Camera")
     print(batman.state)
     batman.wake_up()
     print(batman.state)
