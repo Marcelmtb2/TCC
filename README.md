@@ -12,9 +12,7 @@ https://docs.google.com/spreadsheets/d/1-JDm41Z7ekAmB6yn_b-J0OSfbQO-CdqjbCHCk1QT
 - Background subtraction
 - Contour Detection
 - HSV Histogram
-- Feature Matching*
-- Kalman Filter*
-- Optical FLow*
+- Feature Matching?
 
 ## Journal
 
@@ -22,12 +20,20 @@ https://docs.google.com/spreadsheets/d/1-JDm41Z7ekAmB6yn_b-J0OSfbQO-CdqjbCHCk1QT
 
 02-dez -> update on advances
 
-Background subtraction is functional.
-Comparison between Mix of Gaussians and K-Nearest Neighbors showed K-NN is more demanding
-Background noise and a lot of shadow movements were removed by image filtering and
-proper Background Subtractor configuration.
+06-dez -> Background detection achieved. Mix of Gaussians and K-Nearest Neighbours tested.
+By comparing performance and image quality, the choice for detection is the MoG.
+
+Comparison shows that K-NN is more computationally demanding, it generates more background noise
+and it is more sensitive to variations in the illumination levels of the scene that the MoG method.
+
+20-dez -> Milestone version. Machine state draft decided, with states and transitions designed.
+Background detection established, Contour detection established, color histogram analysis as redundancy
+for contour detection.
+
+## Optical detection state machine
 
 Object detection will follow 4 steps: 
+
 1st - Background Subtractor calculates a mask of moving objects entering the scene. It is configured
 for maintaining the image of the object up to 10 seconds after stopping in the scene.
 
@@ -35,27 +41,29 @@ for maintaining the image of the object up to 10 seconds after stopping in the s
 the first to be analyzed. If there is a distinct color histogram from the background, other contours
 are discarded and the detected one is accepted as a valid object
 
-3rd - A State Machine will be applied, to evaluate whether the conditions for capturing images have been met.
+new 3rd state - After detected and ordered by size all contours, the contour must be retained. So, if
+the system operator does not remove the surgical tool from scene, it should recognize that a similar
+contour is still present, and not allow the capture of a new image. 
+The method of choice for a first attempts will be the Hu Moments and cv2.matchshape().
+
+4th- A State Machine will be applied, to evaluate whether the conditions for capturing images have been met.
 If all conditions are satisfied, a square region of interest (ROI) will be selected to match
 the input format required by the surgical instrument identification service.
 
 More experiments will be made in code for Contour Detection, HSV Histogram and Kalman Filters, as them seem easier and 
-faster to progress
+faster to progress.
 
-Following initial work, Optical Flow and Feature Matching will be discontinued. 
-Optical flow does not applies well in a scenario in which may have illumination changes or rapid movement of objects.
-Feature matching needs to apply an extensive amount of masks, in different format, sizes and directions in each frame,
-before detecting the presence of an object entering the scene. It will consume more time than the application demands.
+Feature matching will be used in the new approach of identifying if the object does not leave the scene, and is just 
+rotated in the scene.
 
-# New Video examples
+Following initial work, Optical Flow will be discontinued. Optical flow does not applies well in a scenario in which may have illumination changes or rapid movement of objects.
 
-It was used an open-source application named BORIS, designed as an annotation tool for biological and animal behaviour.
 
-The annotations of the first version are stored, but it will not be used at the first version.
+# Video examples
 
-The annotated video had the problem of unstable movement between camera and background. 
+The first video had the problem of unstable movement between camera and background. 
 
-It was built a stable platform for acquiring images, in better controlled conditions.
+It was built a stable platform for acquiring images, with better controlled conditions.
 
 Shorter videos were captured, with low and high illumination conditions, testing the following conditions:
 1 - simple object entering the scene, after occasional oclusion of a hand
@@ -68,39 +76,25 @@ Shorter videos were captured, with low and high illumination conditions, testing
 
 ## Comparison between KNN and MOG2 methods for the background subtractor.
 
-The configuration detectShadows must be True, in order to filter small
+Setting equivalent default configuration. The detectShadows=True, to filter
 variations in brightness in any lightning conditions, in both methods.
 After detection of objects and their shadows, it will be used a threshold
 to remove the detected shadows of the final mask.
 
-1. Critérios de Avaliação
-- Velocidade (Desempenho Computacional)
-Compare o tempo necessário para processar cada frame com os dois métodos.
-Use a função cv2.getTickCount() para medir o tempo.
-- Precisão (Qualidade de Detecção)
-Avalie como cada método separa o foreground do background:
+1. Criteria
+- Velocity:  Using cv2.getTickCount() for measuring time, MOG2 was usually faster (20% faster than K-NN).
 
-Taxa de Falsos Positivos: Áreas identificadas como foreground erroneamente.
-Taxa de Falsos Negativos: Áreas de foreground não detectadas.
-Robustez: Sensibilidade a mudanças bruscas de iluminação ou ruídos na cena.
-- Adaptabilidade
-Teste como cada subtrator se adapta a cenários em que o objeto entra na cena, sai ou permanece estático.
-Verifique a velocidade de adaptação para considerar novos objetos como parte do background.
-2. Etapas de Comparação
-- Configuração Inicial
-Configure ambos os subtratores com parâmetros similares
-- Medição de Tempo
-Use o tempo médio por frame como métrica de desempenho
-- Qualidade Visual
-Exiba os resultados lado a lado para análise qualitativa
+- Precision (Detection quality): Evaluating how each method separates foreground from background, both were
+capable of executing the task, but the KNN method generates more pixel noise
+to the final mask of identified foreground objects.
 
-- Teste com Cenários Variados
-Use vídeos com condições diferentes para testar a robustez:
+2. Testing in variate conditions
+  
+  Using videos in different conditions for testing robustness, the hardest conditions are: 
 
-Mudança de iluminação: Exemplo, luzes acendendo ou apagando.
-Movimento de background: Ventilador ou cortinas em movimento.
-Objetos estáticos por um período longo.
-Após realizar os testes, você pode basear sua escolha no seguinte:
+  - sudden changes in illumination condition;
+  - the presence of the object in the scene since the method start (the object is assumed as part of background and will interfere with the background detection);
+  - Objects being static for long periods.
 
 MOG2:
 Geralmente mais rápido.
@@ -159,7 +153,7 @@ Objeto muito próximo, cortado pelas bordas do quadro.
 
 ### Ruído visual ou obstruções temporárias:
 
-Outros objetos entrando e saindo do campo de visão (interferências dinâmicas).
+Outros objetos ou sombras de objetos entrando e saindo do campo de visão (interferências dinâmicas).
 
 ## Estados da máquina
 
