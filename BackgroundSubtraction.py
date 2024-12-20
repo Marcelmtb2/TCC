@@ -2,43 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Pasta com os arquivos de vídeo
-# import os
-# main_path = r"video\videosMock"
-# files = os.listdir(main_path)
-# for file in files:
-#     print(file)
-
-# Nomes dos arquivos
-# videos novos com mock de instrumento
-# BaixaIluminacao100luxSombraForte.mp4
-# TrocaObjetosAutofocoAtrapalha.mp4
-# Iluminacao800_560lux.mp4
-# Objeto15segs.mp4
-# Objeto15segSubstituido.mp4
-# objeto3segs.mp4
-# ObjetoInicio.mp4
-# ObjetoOrtogonalDiagonal.mp4
-# ObjetoReposicionado.mp4
-# OclusãoMão.mp4
-# OclusãoTempMão.mp4
-# TemperaturaCor3k_9k.mp4 - para gerar valores HSV do background!
-# ContrasteTemperaturaCor3k_9k.mp4 - para gerar valores HSV do background!
-
-# Videos anteriores
-# cabo luz off.mp4
-# cabo movimento maos luz on.mp4
-# caixa clara movimento maos luz on.mp4
-# caixa desde inicio luz on.mp4
-# caixa luz off.mp4
-# caixa mudanca iluminacao.mp4
-# Paquimetro luz off.mp4
-# Paquimetro mao presente luz off.mp4
-# Paquimetro para caixa luz off.mp4
-# Regua luz off.mp4
-# regua refletiva luz on.mp4
-
-# TODO: Resumindo a 5 todo's. Descrever os objetivos diários também:
+# TODO: Descrever os objetivos diários também:
 # segunda-feira 09/12 - terminar o statemachine e o subtrator de background
 # terça-feira 10/12 - Adicionar identificação por histograma e revisar
 # a máquina de estados, para permitir a tomada de novas imagens depois do
@@ -47,42 +11,47 @@ import matplotlib.pyplot as plt
 # o operador pega o objeto por meio das bounding boxes em contato com as
 # bordas da imagem. Localizar bounding boxes com centroides variando no tempo
 # com e sem contato com as bordas da imagem.
-# quinta-feira 12/12- Fazer vídeos com o mock do instrumento, replicando cada
+# quinta-feira 19/12- Fazer vídeos com o mock do instrumento, replicando cada
 # um dos desafios de detecção listados no readme do projeto
-# Sexta-feira 13/12 - integrar tudo nos moldes OOP. Mandar o resumo a Jeff!
+# Sexta-feira 20/12 - integrar tudo nos moldes OOP. Mandar o resumo a Jeff!
 
 # TODO: O serviço de identificação foi treinado com imagens quadradas. Ideia:
 # Utilizar o centro da bounding box para extrair um ROI quadrado, que
 # contenha completamente o objeto adicionando uma margem de 20 ou mais pixels.
 
-# TODO: Resolver problemas de ruído de cor, em imagens com iluminação baixa.
-# Aumentar iluminação resolve parcialmente. Que filtragem usar? Bilateral!
-# Testar pré-processamento antes de aplicar o subtrator, como equalização
-# de histograma grayscale para aumentar o contraste (Não funciona! Gerou
-# muito ruído).
+# Resolvido problemas de ruído de cor. Descartar imagens com iluminação
+# baixa. Padronizar iluminação resolve parcialmente. Iluminação usada segue
+# o padronizado pelo ministério do trabalho, pela NR-17, e ABNT, pela NBR5413.
+# Videos com o instrumento mock padronizaram o nível mínimo de iluminação para
+# 800 lux, acima dos 750 lux exigidos para um ambiente de trabalho como o do
+# CME. Foi usado um aplicativo de celular para fazer a medição. A margem de
+# 50 lux foi para contornar algum problema de calibração da câmera de celular
+# usada para a medição do nível de luminosidade.
+
+# Filtragem adicional usada foi a Bilateral. Filtrou ruídos tipo "shot noise"
+# e suavizou o "temporal noise", característicos de sensores tipo CCD ou CMOS.
+# Testado pré-processamento antes de aplicar o subtrator, como equalização
+# de histograma grayscale para aumentar o contraste, mas não funciona, pois
+# adicionou muito ruído de imagem.
 # Para processar a máscara, usar operações morfológicas para melhorar a
-# qualidade da máscara calculada.
-# Testado apenas dilatação, para evitar quebras de contiguidade do objeto
-# em cena(funcionou melhor do que usar o Fechamento).
-# Usar Fechamento pode causar quebras de contorno e partir o
-# contorno do objeto.
-# Como os objetos geralmente são maiores ou
-# de tamanho similar ao das mãos, selecionar os maiores bounding boxes
-# encontrados, analisar se não é background pelo histograma e excluir os
-# outros bounding boxes.
+# qualidade da máscara calculada. Testado dilatação, evitou quebras de
+# contiguidade do objeto em cena. Funcionou melhor do que usar o Fechamento,
+# pois evitou a divisão do contorno de objetos presentes na cena devido a
+# variações pequenas de cor.
+# Usar Fechamento causou quebras de contorno e partiu o contorno do objeto
+# em algumas situações de sombreamento em objetos no campo de visão.
+
 
 # TODO: Melhorar a identificação depois do contour detection, aplicando
-# métodos de cor e histograma, e o filtro de kalman para operar sobre a
-# máscara extraída pelo subtrator de background.
-# Contour Detection encontra os maiores bounding boxes.
+# métodos de cor e histograma,
+# Contour Detection encontra os bounding boxes, mas devem ser filtrados.
+# Podem ser usados os critérios de área mínima em pixels e proximidade dos
+# contornos às bordas da imagem.
 # Métodos de cor e Histograma obtém perfil do background no início do
-# funcionamento do sistema, e identificar facilmente a cor dos objetos
+# funcionamento do sistema, e identificam facilmente a cor dos objetos
 # inseridos na imagem.
-# O filtro de Kalman pode ser usado para prever movimento de objetos ou
-# das mãos, com o desafio de identificar os movimentos mais rápidos de
-# retirada das mãos do campo de imagem.
 
-# TODO: Comparado o subtrator tanto o MOG2 com o KNN, com as conclusões de
+# Comparado o subtrator tanto o MOG2 com o KNN, com as conclusões de
 # não usar KNN por gerar mais ruído de pixels. MoG2 será configurado para
 # ter taxa de aprendizado (learningRate) variando, de acordo com a condição
 # do ambiente.
@@ -101,8 +70,8 @@ import matplotlib.pyplot as plt
 # margem de 10% da dimensão horizontal ou vertical em relação às bordas, para
 # simplificar a aplicação dos algoritmos ignorando as regiões laterais
 
-# TODO: Fazer novos vídeos com o mock de instrumental de laparoscopia
-# Reajustar a altura da câmera para não pegar o suporte
+# Gravados novos vídeos com o mock de instrumental de laparoscopia
+# Não foi possível reajustar a altura da câmera para não pegar o suporte
 # Ver como se faz para calibrar a câmera para corrigir distorções
 # tipo "pincushion" que produzem distorção esférica em torno do centro
 # da imagem
@@ -586,3 +555,11 @@ if __name__ == '__main__':
 
 # O teste de variação brusca de iluminação será entre 800 lux a 560 lux,
 # de 25% para 15% da potência máxima de iluminação
+
+
+# Pasta com os arquivos de vídeo
+# import os
+# main_path = r"video\videosMock"
+# files = os.listdir(main_path)
+# for file in files:
+#     print(file)
