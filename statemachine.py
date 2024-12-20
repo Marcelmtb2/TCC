@@ -2,33 +2,52 @@
 from transitions import Machine
 import random
 
+
 class ObjectTracking(object):
 
-    # Define some states. Most of the time, narcoleptic superheroes are just like
-    # everyone else. Except for...
-    # states = ['asleep', 'hanging out', 'hungry', 'sweaty', 'saving the world']
-    states = ['inicial', 'monitorar', 'objeto_encontrado', 'objeto_parado',
-              'objeto_livre', 'objeto_coberto', 'objeto_cortado', ]
+    # Defining states, following the image acquisition requirements
+    states = ['configurar', 'monitorar', 'obter_imagem', 'detectar_objeto',
+              'objeto_coberto', 'objeto_cortado', ]
 
-    def __init__(self, name):
-
-        # No anonymous superheroes on my watch! Every narcoleptic superhero gets
-        # a name. Any name at all. SleepyMan. SlumberGirl. You get the idea.
-        self.name = name
-
-        # What have we accomplished today?
-        self.kittens_rescued = 0
+    def __init__(self):
 
         # Initialize the state machine
         self.machine = Machine(model=self, states=ObjectTracking.states,
-                               initial='inicial')
+                               initial='configurar')
 
-        # Add some transitions. We could also define these using a static list of
-        # dictionaries, as we did with states above, and then pass the list to
-        # the Machine initializer as the transitions= argument.
+        # At "configurar" state, camera will configure the system for
+        # capturing images. When configuration ends, it will change
+        # Unconditionally to "monitorar" state.
+        self.machine.add_transition(trigger='iniciar_monitoramento',
+                                    source='configurar',
+                                    dest='monitorar')
 
-        # At some point, every superhero must rise and shine.
-        self.machine.add_transition(trigger='wake_up', source='asleep', dest='hanging out')
+        # At the "monitorar" state, it will capture images continuously, and
+        # change to state "detectar_objeto" if any object enters the scene
+        self.machine.add_transition(trigger='objeto_movimentando',
+                                    source='monitorar',
+                                    dest='detectar_objeto')
+
+        # At the "detectar_objeto" state, it will analyze if the centroid
+        # of the detected contour stops moving in the image, and its
+        # bounding box has no intersection with image borders
+        self.machine.add_transition(trigger='objeto_parado',
+                                    source='detectar_objeto',
+                                    dest='obter_imagem')
+
+        # At the "obter_imagem" state, all necessary conditions for
+        # capturing the image are satisfied. The image is sent to the image
+        # recognition server/service, and the system must return to the
+        # "monitorar" state to get ready for new image acquisitions
+        self.machine.add_transition(trigger='imagem_enviada',
+                                    source='obter_imagem',
+                                    dest='monitorar')
+
+        # Treating adverse image conditions
+        # Image not stopping
+        # Image occlusions
+        # Service not recognizing the image (needs object repositioning)
+        # 
 
         # Superheroes need to keep in shape.
         self.machine.add_transition('work_out', 'hanging out', 'hungry')
