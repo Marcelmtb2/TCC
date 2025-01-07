@@ -15,54 +15,14 @@ import matplotlib.pyplot as plt
 # um dos desafios de detecção listados no readme do projeto
 # Sexta-feira 20/12 - integrar tudo nos moldes OOP. Mandar o resumo a Jeff!
 
-# TODO: O serviço de identificação foi treinado com imagens quadradas. Ideia:
-# Utilizar o centro da bounding box para extrair um ROI quadrado, que
-# contenha completamente o objeto adicionando uma margem de 20 ou mais pixels.
-
-# Resolvido problemas de ruído de cor. Descartar imagens com iluminação
-# baixa. Padronizar iluminação resolve parcialmente. Iluminação usada segue
-# o padronizado pelo ministério do trabalho, pela NR-17, e ABNT, pela NBR5413.
-# Videos com o instrumento mock padronizaram o nível mínimo de iluminação para
-# 800 lux, acima dos 750 lux exigidos para um ambiente de trabalho como o do
-# CME. Foi usado um aplicativo de celular para fazer a medição. A margem de
-# 50 lux foi para contornar algum problema de calibração da câmera de celular
-# usada para a medição do nível de luminosidade.
-
-# Filtragem adicional usada foi a Bilateral. Filtrou ruídos tipo "shot noise"
-# e suavizou o "temporal noise", característicos de sensores tipo CCD ou CMOS.
-# Testado pré-processamento antes de aplicar o subtrator, como equalização
-# de histograma grayscale para aumentar o contraste, mas não funciona, pois
-# adicionou muito ruído de imagem.
-# Para processar a máscara, usar operações morfológicas para melhorar a
-# qualidade da máscara calculada. Testado dilatação, evitou quebras de
-# contiguidade do objeto em cena. Funcionou melhor do que usar o Fechamento,
-# pois evitou a divisão do contorno de objetos presentes na cena devido a
-# variações pequenas de cor.
-# Usar Fechamento causou quebras de contorno e partiu o contorno do objeto
-# em algumas situações de sombreamento em objetos no campo de visão.
-
-
-# TODO: Melhorar a identificação depois do contour detection, aplicando
-# métodos de cor e histograma,
+# TODO: Aplicar métodos de cor, histograma e identificar na imagem colorida,
+# para identificar se há objeto presente desde o início da filmagem e para
+# obter perfil de RGB/HSV do background.
 # Contour Detection encontra os bounding boxes, mas devem ser filtrados.
-# Podem ser usados os critérios de área mínima em pixels e proximidade dos
-# contornos às bordas da imagem.
+# Será usado o critério de proximidade dos contornos às bordas da imagem.
 # Métodos de cor e Histograma obtém perfil do background no início do
 # funcionamento do sistema, e identificam facilmente a cor dos objetos
 # inseridos na imagem.
-
-# Comparado o subtrator tanto o MOG2 com o KNN, com as conclusões de
-# não usar KNN por gerar mais ruído de pixels. MoG2 será configurado para
-# ter taxa de aprendizado (learningRate) variando, de acordo com a condição
-# do ambiente.
-# Primeiro caso a resolver é do de alteração brusca de iluminação, que cria
-# vários artefatos de identificação pequenos. O segundo é quando o objeto
-# está presente na cena desde o início, atrapalhando a aquisição do frame
-# de referência. Tornar o learningRate muito alto (0.9~1.0), menos frames
-# são usados para calcular o background, e o algoritmo se adapta mais
-# rápido às novas condições.
-# Ideia de implementação é iniciar o programa com taxa muito alta e baixar
-# a taxa para muito lenta quando se perceber alguma movimentação de objeto.
 
 # TODO: Determinar a região de interesse (ROI) como o bounding box esperado
 # para o instrumento, como o maior presente na tela. Também adicionar a
@@ -70,49 +30,26 @@ import matplotlib.pyplot as plt
 # margem de 10% da dimensão horizontal ou vertical em relação às bordas, para
 # simplificar a aplicação dos algoritmos ignorando as regiões laterais
 
-# Gravados novos vídeos com o mock de instrumental de laparoscopia
-# Não foi possível reajustar a altura da câmera para não pegar o suporte
-# Ver como se faz para calibrar a câmera para corrigir distorções
-# tipo "pincushion" que produzem distorção esférica em torno do centro
-# da imagem
-# Refazer os vídeos com as seguintes condições:
-# - Entrada e saída simples de objeto do campo de visão da câmera
-# - Entrada, e rotação do objeto antes da saída
-# - Entrada e saída de 2x do mesmo objeto, para identificar 2 objetos
-# diferentes
-# - Mudanças de iluminação
-# - Baixa iluminação
-
-# Resumo dos parâmetros do subtrator tipo MixOfGaussians2
-#
-# Parâmetro history: Define número de frames para calcular o background.
-# Aumentar o valor torna o sistema mais robusto contra mudanças
-# rápidas, mas com resposta mais lenta a objetos que se tornam estáticos.
-# Padrão = 500
-#
-# Parâmetro varThreshold: Controla a sensibilidade para decidir se um pixel
-# pertence ao foreground. Aumente para reduzir ruídos de iluminação.
-# Limiar para decisão de "objeto em movimento" com base na variância das
-# Gaussianas do modelo.
-# Padrão = 16.0
-# Valores menores: Mais sensível a pequenas variações, como ruídos e
-# leves mudanças no fundo.
-#
-# Parâmetro detectShadows: Ativa (Default = True) para lidar com sombras. Isso
-# classifica pixels de sombra como "quase foreground" com um tom mais escuro.
-
-# fgbgKNN = cv2.createBackgroundSubtractorKNN(history=500, dist2Threshold=400)
-# Resumo dos parâmetros do subtrator tipo KNN
-# dist2Threshold: Define a distância para considerar um pixel como parte do
-# foreground. Valores maiores tornam o método mais tolerante a variações.
-# Parâmetro history: Funciona identicamente ao MOG2.
-
 # Desenhar o código com princípios de Orientação a Objeto
 # Tarefas do programa:
+
 # - Inicializar e checar sistema
-# - pré-processar o frame
-# - identificar contorno
-# - verificar se o contorno está imóvel
+# -- Checar se câmera está presente e ativa
+# -- Configurar a subtração de background com valores default
+
+# - Capturar o frame para enviar ao serviço de identificação
+# -- verificar se o primeiro frame contém algum objeto
+# ---- Se houver, acelerar a taxa de aprendizado até o objeto ser removido do
+# campo de visão da câmera.
+# -- Identificar o contorno do objeto que se move para entrar em cena e depois
+# -- fica parado por alguns segundos ao centro do cambo de visçao da gea
+# -- Analisar o conteúdo HSV dos pixels da imagem
+# -- pré-processar o frame, redimensionar e converter para cinza
+# e reduzir complexidade computacional
+# -- Filtrar ruído de digitalização da imagem
+
+# - identificar contornos
+# - verificar se o centroide do contorno do objeto está imóvel
 # - verificar se o contorno não tem contato com a borda da imagem (braço/mão)
 # - Se as duas verificações forem verdadeiras, capturar uma imagem centrada
 # em torno do centróide do bounding box da detecção do objeto (o maior objeto
@@ -125,58 +62,73 @@ import matplotlib.pyplot as plt
 # para calcular os contornos? Reencodados videos para Full HD para testar
 # os algoritmos, depois usar os vídeos originais
 
-pasta = "video\\videosMock\\"
 
-# cap = cv2.VideoCapture(r"video\video.mp4")
-# cap = cv2.VideoCapture(r"video\teste.mp4")
-
-objeto1 = "cabo luz off.mp4"
-objeto2 = "cabo movimento maos luz on.mp4"
-objeto3 = "caixa clara movimento maos luz on.mp4"
-objeto4 = "caixa desde inicio luz on.mp4"
-objeto5 = "caixa luz off.mp4"
-objeto6 = "caixa mudanca iluminacao.mp4"
-objeto7 = "Paquimetro luz off.mp4"
-objeto8 = "Paquimetro mao presente luz off.mp4"
-objeto9 = "Paquimetro para caixa luz off.mp4"
-objeto10 = "Regua luz off.mp4"
-objeto11 = "regua refletiva luz on.mp4"
-
-objeto12 = "BaixaIluminacao100luxSombraForte.mp4"
-objeto13 = "TrocaObjetosAutofocoAtrapalha.mp4"
-objeto14 = "Iluminacao800_560lux.mp4"
-objeto15 = "Objeto15segs.mp4"
-objeto16 = "Objeto15segSubstituido.mp4"
-objeto17 = "objeto3segs.mp4"
-objeto18 = "ObjetoInicio.mp4"
-objeto19 = "ObjetoOrtogonalDiagonal.mp4"
-objeto20 = "ObjetoReposicionado.mp4"
-objeto21 = "OclusãoMão.mp4"
-objeto22 = "OclusãoTempMão.mp4"
-objeto23 = "TemperaturaCor3k_9k.mp4"  # - para gerar valores HSV do background
-objeto24 = "ContrasteTemperaturaCor3k_9k.mp4"  # - valores HSV do background
-
-objeto = objeto23
-
-cap = cv2.VideoCapture(pasta + objeto)
-
-
+# inicializar sistema de captura de objetos
 def config_capture():
     fgbgMOG2 = cv2.createBackgroundSubtractorMOG2(
-            history=1500, varThreshold=50, detectShadows=True)
+            history=500, varThreshold=50, detectShadows=True)
+# All default values were confirmed, as testing history and varThreshold
+# do not altered much the final result
     return fgbgMOG2
 
 
-def find_object_at_start(image):
-    pass
+def find_object_at_start(image, object_at_start=False):
+    # para detectar bordas, usar threshold em imagens convertidas para escala
+    # de cinza ou aplicar filtro Canny para evidenciar bordas de contornos
+    # verifica se image está no formato 16:9
+    height, width = image.shape[0:2]
+    ratio3x4 = 0.75
+    cropleft = 0.21875
+    cropright = 0.77  # 0.78125
+    # limitação é de o instrumento deve ser mais escuro que o background. Ou
+    # deve ser criada rotina que detecta se será necessário inverter a máscara
+    # obtida.
+    # Dado que os instrumentos usados no teste são de cor preta.
+    if (height/width) < ratio3x4:
+        frame = image[0:height, int(cropleft * width): int(cropright * width)]
+    else:
+        frame = image  # Não cropar se a resolução não for 9x16
+    # Filtrando o ruído de digitalização da câmera
+    # Adicionar as descrições dos parâmetros e variar os valores
+
+    # Pré processamento
+    # Redimensionar para acelerar processamento
+    reduced = cv2.resize(frame, None, fx=0.5, fy=0.5,
+                         interpolation=cv2.INTER_AREA)
+    f_bilateral = cv2.bilateralFilter(reduced, d=15, sigmaColor=75,
+                                      sigmaSpace=125)
+    img_gray = cv2.cvtColor(f_bilateral, cv2.COLOR_BGR2GRAY)
+    # apply binary thresholding, object white and background black
+    ret, thresh = cv2.threshold(img_gray, 90, 255, cv2.THRESH_BINARY_INV)
+    # visualize the binary image
+    # cv2.imshow('Binary image', thresh)
+    # cv2.waitKey(0)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    # se algum contorno for identificado, retornar true
+    if len(contours):
+        width_img_gray, height_img_gray = img_gray.shape[0:2]
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            if w >= 0.9 * width_img_gray:  # se um contorno de sombra atravessa
+                # a imagem de um lado a outro
+                return False
+            cv2.rectangle(img_gray, (x, y), (x + w, y + h),
+                          (0, 0, 255), 2)
+        # visualize the binary image
+        cv2.imshow('Binary image', img_gray)
+        return True
+    return False
     # find contours of objects before background subtraction. If there are any
-    # contours, max out the learningRate parameter to 1 until no object is
+    # contours, max out the learningRate parameter to 0.11 until no object is
     # present in the image
 
 
+# pre-processar frame
 def preprocess_image(image):
     # retorna imagem filtrada
-    # filtrar contra ruído 'sal e pimenta' para os casos com  baixa iluminação
+    # filtrar ruído de digitalização da câmera. Testados filtros para os casos
+    # com baixa iluminação
 
     # verifica se image está no formato 16:9
     height, width = image.shape[0:2]
@@ -184,7 +136,7 @@ def preprocess_image(image):
     # ratio 9x16 = 2160/3840 = 0.56225
     ratio3x4 = 0.75
     cropleft = 0.21875
-    cropright = 0.78125
+    cropright = 0.77
 
     if (height/width) < ratio3x4:
         frame = image[0:height, int(cropleft * width): int(cropright * width)]
@@ -192,13 +144,13 @@ def preprocess_image(image):
         frame = image  # Não cropar se a resolução não for 9x16
     # Pré processamento
     # Redimensionar para acelerar processamento
-    reduced = cv2.resize(frame, None, fx=0.25, fy=0.25,
+    reduced = cv2.resize(frame, None, fx=0.5, fy=0.5,
                          interpolation=cv2.INTER_AREA)
 
-    # Filtrando o ruído "sal e pimenta" de ruído da câmera
+    # Filtrando o ruído de digitalização da câmera
     # Adicionar as descrições dos parâmetros e variar os valores
     f_bilateral = cv2.bilateralFilter(reduced, d=9, sigmaColor=75,
-                                      sigmaSpace=75)
+                                      sigmaSpace=125)
     # O filtro bilateral distorceu menos os contornos do que o filtro
     # mediana cv2.medianBlur(reduced, 3)
 
@@ -218,11 +170,74 @@ def preprocess_image(image):
     return gray_frame
 
 
+def find_foreground_object(image, learning_rate=0.0001):
+    # Identifica objeto que se move em relação ao background
+    # O parâmetro learningRate controla em quanto tempo o objeto
+    # em movimento e parou na cena será considerado parte do background
+    fgmaskMOG2 = fgbgMOG2.apply(image, learningRate=learning_rate)
+    thresh = cv2.threshold(fgmaskMOG2, 210, 255, cv2.THRESH_BINARY)[1]
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    clean_mask = cv2.dilate(thresh, kernel, iterations=2)
+    return clean_mask
+
+
+def identify_contours(image_binary_mask):
+    # Detecção de contornos na máscara calculada (justificar os parâmetros)
+    contours, _ = cv2.findContours(
+        image_binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    # Criar uma lista de bounding boxes, se existirem
+    # if len(contours):
+    # bounding_boxes = [cv2.boundingRect(c) for c in contours]
+
+    # Agrupar bounding boxes próximas
+    # x_min = min([x for (x, y, w_box, h_box) in bounding_boxes])
+    # y_min = min([y for (x, y, w_box, h_box) in bounding_boxes])
+    # x_max = max([x + w_box for (x, y, w_box, h_box) in bounding_boxes])
+    # y_max = max([y + h_box for (x, y, w_box, h_box) in bounding_boxes])
+
+    # Caixa circundante final
+    # final_bounding_box = (x_min, y_min, x_max - x_min, y_max - y_min)
+
+    # identificando quais contornos estão em contato com a borda
+    # agrupar apenas os contornos longe da borda
+    # se algum contorno em contato com a borda se aproximar do
+    # objeto, considerar como sendo a mão do operador.
+    mask_height, mask_width = image_binary_mask.shape  # Dimensões da imagem
+    image_border = 10  # Distância mínima das bordas
+    valid_contours = []
+    border_contours = []
+    for contour in contours:
+        x_0, y_0, x_1, y_1 = cv2.boundingRect(contour)
+        # Verificar se o contorno está longe das bordas
+        bool_top_corner = x_0 > image_border and y_0 > image_border
+        bool_bot_corner1 = (x_0 + x_1) < mask_width - image_border
+        bool_bot_corner2 = (y_0 + y_1) < mask_height - image_border
+
+        if bool_bot_corner1 and bool_bot_corner2 and bool_top_corner:
+            valid_contours.append(contour)
+        else:
+            border_contours.append(contour)
+
+    print(f'foram encontrados {len(contours)} contornos.')
+    for contour in contours:
+        # area = cv2.contourArea(contour)
+        # if area > MIN_CONTOUR_AREA:
+        # Obter as coordenadas do retângulo delimitador
+        x, y, w, h = cv2.boundingRect(contour)
+
+        # Desenhar contorno válido e exibir mensagem
+        # x, y, w, h = cv2.boundingRect(valid_contour)
+        cv2.rectangle(preproc_image, (x, y), (x + w, y + h),
+                      (0, 255, 0), 2)
+
+
 def analyze_hsv(frame):
     # # plotar o histograma RGB e HSV do frame atual
 
     # colors = ('b', 'g', 'r')
-    # total_pixels = frame.shape[0] * frame.shape[1]  # Total de pixels no frame
+    # total_pixels = frame.shape[0] * frame.shape[1]  # Total de pixels
+    # no frame
 
     # # Inicializar janela gráfica, se necessário
     # if not hasattr(analyze_hsv, 'initialized'):
@@ -250,8 +265,10 @@ def analyze_hsv(frame):
     # for i, color in enumerate(colors):
     #     hist = cv2.calcHist([frame], [i], None, [256], [0, 256])
     #     # accumulated_histograms[color] += hist.flatten()
-    #     hist_percent = (hist.flatten() / total_pixels) * 100  # Converter para percentual
-    #     accumulated_histograms[color] = hist_percent  # Acumular em percentual
+    #     hist_percent = (hist.flatten() / total_pixels) * 100
+    # # Converter para percentual
+    #     accumulated_histograms[color] = hist_percent
+    # # Acumular em percentual
     #     ax_hist.plot(accumulated_histograms[color], color=color)
 
     # # Atualizar gráficos
@@ -271,8 +288,10 @@ def analyze_hsv(frame):
     object_mask = cv2.bitwise_not(bg_mask)
 
     # Calcular histogramas
-    bg_hist = cv2.calcHist([hsv], [0, 1], bg_mask, [180, 256], [0, 180, 0, 256])
-    obj_hist = cv2.calcHist([hsv], [0, 1], object_mask, [180, 256], [0, 180, 0, 256])
+    bg_hist = cv2.calcHist([hsv], [0, 1], bg_mask, [180, 256],
+                           [0, 180, 0, 256])
+    obj_hist = cv2.calcHist([hsv], [0, 1], object_mask,
+                            [180, 256], [0, 180, 0, 256])
 
     # Normalizar histogramas
     bg_hist = cv2.normalize(bg_hist, bg_hist).flatten()
@@ -292,7 +311,7 @@ def analyze_hsv(frame):
 
 
 def locate_object(image):
-    # Recebe imagem, retorna máscara e bounding box do objeto
+    # Recebe imagem preprocessada, retorna máscara e bounding box do objeto
     #
     pass
 
@@ -304,6 +323,8 @@ def check_capture_conditions():
 
 
 def send_capture():
+    # Estágio final, para enviar o frame original depois de
+    # satisfeitas todas os requisitos para o envio da imagem
     pass
 
 
@@ -319,54 +340,146 @@ def reajust_background():
 
 
 def check_illumination():
+    # rotina para checar mudanças bruscas de iluminação, para
+    # evitar a formação de artefatos
     pass
 
 
 if __name__ == '__main__':
+
+    # Vídeos originais gravados em 4k. Reduzir resolução para a cópia usada
+    # para calcular os contornos? Reencodados videos para Full HD para testar
+    # os algoritmos, depois usar os vídeos originais
+
+    pasta = "video\\videosMock\\"
+
+    # cap = cv2.VideoCapture(r"video\video.mp4")
+    # cap = cv2.VideoCapture(r"video\teste.mp4")
+    # objetos genéricos
+    objeto1 = "cabo luz off.mp4"
+    objeto2 = "cabo movimento maos luz on.mp4"
+    objeto3 = "caixa clara movimento maos luz on.mp4"
+    objeto4 = "caixa desde inicio luz on.mp4"
+    objeto5 = "caixa luz off.mp4"
+    objeto6 = "caixa mudanca iluminacao.mp4"
+    objeto7 = "Paquimetro luz off.mp4"
+    objeto8 = "Paquimetro mao presente luz off.mp4"
+    objeto9 = "Paquimetro para caixa luz off.mp4"
+    objeto10 = "Regua luz off.mp4"
+    objeto11 = "regua refletiva luz on.mp4"
+    # mock de instrumento
+    objeto12 = "BaixaIluminacao100luxSombraForte.mp4"
+    objeto13 = "TrocaObjetosAutofocoAtrapalha.mp4"
+    objeto14 = "Iluminacao800_560lux.mp4"
+    objeto15 = "Objeto15segs.mp4"
+    objeto16 = "Objeto15segSubstituido.mp4"
+    objeto17 = "objeto3segs.mp4"
+    objeto18 = "ObjetoInicio.mp4"
+    objeto19 = "ObjetoOrtogonalDiagonal.mp4"
+    objeto20 = "ObjetoReposicionado.mp4"
+    objeto21 = "OclusãoMão.mp4"
+    objeto22 = "OclusãoTempMão.mp4"
+    objeto23 = "TemperaturaCor3k_9k.mp4"
+    # - para gerar valores HSV do background
+    objeto24 = "ContrasteTemperaturaCor3k_9k.mp4"
+    # - valores HSV do background
+
+    # selecionar o video do objeto
+    objeto = objeto23
+    # ====================================
+    # Inicializar captura de imagens
+
+    cap = cv2.VideoCapture(pasta + objeto)
+    # Obter a taxa de quadros (FPS) do vídeo
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = 0
+
+    # Inicializar o subtrator de background com valores default, mas
+    # com learningRate muito pequeno, 0.0001, para preservar objeto
+    # por algum tempo após parar o movimento. Calibrar para que o objeto
+    # seja considerado background após 10 segundos, na inicialização.
     fgbgMOG2 = config_capture()
 
-    # Inicializar acumuladores de histogramas
-    accumulated_histograms = {
-        'b': np.zeros((256,), dtype=np.float32),
-        'g': np.zeros((256,), dtype=np.float32),
-        'r': np.zeros((256,), dtype=np.float32)
-    }
+    # Inicializar a checagem de presença de objeto no início do vídeo.
+    # Caso o primeiro frame do vídeo tenha contornos de objeto, mudar
+    # flag object_at_start para True
+    object_at_start = True
 
+    # Flag para debugar fonte de erros
+    system_status = "None"
+
+    # Loop para checar presença de objetos frame a frame
     while cap.isOpened():
+        # Verificar cada frame para comparar as condições de aquisição
+        # da imagem.
+
+        # Capturar a imagem para avaliar se satisfaz às condições
+        # Se houver erro na câmera, sinalizar com flag system_status
         ret, frame = cap.read()
         if not ret:
+            print('Problema com a câmera. Por favor, conferir o equipamento.')
+            system_status = "errorCamera"
             break
 
-        # Determinar um frame de referência, mas atualizá-lo a cada
-        # 30 frames (1x por segundo a 30fps)?
-        # analyze_hsv(frame)
+        # Depois de preprocessar a imagem, verificar se existe objeto desde
+        # o primeiro frame.
+
         preproc_image = preprocess_image(frame)
+        cv2.imshow("img", preproc_image)
 
-        # b_frame = g_frame
-        # Aplicar subtração de fundo
-        fgmaskMOG2 = fgbgMOG2.apply(preproc_image, learningRate=0.0001)
-        # Taxa de aprendizado muito reduzida = 0.0001 -> tempo muito longo
-        # para recalcular background
-        # Taxa = 0.001 = Recalcula background a cada 14 segundos
-        # A taxa é a velocidade em que o algoritmo atualiza o background
-        # Se for rápida, qualquer objeto em movimento que parar de se mover
-        # na imagem será considerado background rapidamente
-        # Com learningRate=0.0001, há bastante tempo para identificar uma
-        # bounding box
+        if object_at_start:
+            object_at_start = find_object_at_start(frame)
+            learning_rate = 0.1
+            # Na primeira execução do programa, considera que há objeto
+            # presente na imagem, e acelera o learningRate para valor alto,
+            # maior que 0.01. Em seguida, testa se não existe contorno de
+            # algum objeto na primeira imagem recebida.
+            # Caso exista o objeto, manter
+        else:
+            learning_rate = 0.0001
+            # Se retornar False, manter a taxa de aprendizado baixa, oara
+            # melhorar a persistência do objeto na máscara calculada
 
-        # Pós-Processamento
-        thresh = cv2.threshold(fgmaskMOG2, 210, 255, cv2.THRESH_BINARY)[1]
-        # Elimina sombras (valores mais baixos que 200)
+        # TODO>> aparecem dezenas de pequenos contornos quando a mão traz um
+        # novo objeto. Como filtrar os menores contornos?
+        # Depois, identificar o maior contorno pois o esperado é que apenas
+        # um
+        # instrumento esteja no centro da imagem. Usar o bounding box para
+        # delimitar
+        # uma região de interesse e salvar apenas uma cópia dessa ROI.
+        # Enquanto houver um objeto na mesa, comparar o objeto com a cópia
+        # da ROI
+        #
 
-        # Operações morfológicas para limpar ruído - mesmo testando
-        # kernel 3x3, ao invés do 5x5, cortou alguns dos objetos e
-        # algumas das pontas dos instrumentais
-        # Ruído de imagem foi drasticamente reduzido
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        # fgmaskMOG2 = cv2.morphologyEx(fgmaskMOG2, cv2.MORPH_OPEN, kernel)
-        # clean_mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        clean_mask = cv2.dilate(thresh, kernel, iterations=2)
-        # mask = cv2.erode(mask, kernel, iterations=2)
+        clean_mask = find_foreground_object(preproc_image, learning_rate)
+        # Aplicar subtração de fundo - criar função para isso
+        # recebe a imagem pré-processada e retorna a máscara. Também deve
+        # ter o learning rate default em 0.0001, mas permitir a mudança
+        # de valor quando necessário para 0.01 (6 segundos para)
+
+        # fgmaskMOG2 = fgbgMOG2.apply(preproc_image, learningRate=0.001)
+        # # Taxa de aprendizado muito reduzida = 0.0001 -> tempo muito longo
+        # # para recalcular background
+        # # Taxa = 0.001 = Recalcula background a cada 14 segundos
+        # # A taxa é a velocidade em que o algoritmo atualiza o background
+        # # Se for rápida, qualquer objeto em movimento que parar de se mover
+        # # na imagem será considerado background rapidamente
+        # # Com learningRate=0.0001, há bastante tempo para identificar uma
+        # # bounding box
+
+        # # Pós-Processamento
+        # thresh = cv2.threshold(fgmaskMOG2, 230, 255, cv2.THRESH_BINARY)[1]
+        # # Elimina sombras (valores mais baixos que 200)
+
+        # # Operações morfológicas para limpar ruído - mesmo testando
+        # # kernel 3x3, ao invés do 5x5, cortou alguns dos objetos e
+        # # algumas das pontas dos instrumentais
+        # # Ruído de imagem foi drasticamente reduzido
+        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        # # fgmaskMOG2 = cv2.morphologyEx(fgmaskMOG2, cv2.MORPH_OPEN, kernel)
+        # # clean_mask = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        # clean_mask = cv2.dilate(thresh, kernel, iterations=2)
+        # # mask = cv2.erode(mask, kernel, iterations=2)
 
         # Detecção de contornos na máscara calculada (justificar os parâmetros)
         contours, _ = cv2.findContours(
@@ -391,6 +504,7 @@ if __name__ == '__main__':
             # objeto, considerar como sendo a mão do operador.
         mask_height, mask_width = clean_mask.shape  # Dimensões da imagem
         image_border = 10  # Distância mínima das bordas
+        # fazer essa borda como percentual, entre 2 a 5% da dimensão H ou W
         valid_contours = []
         border_contours = []
         for contour in contours:
@@ -405,14 +519,6 @@ if __name__ == '__main__':
             else:
                 border_contours.append(contour)
 
-        # TODO>> aparecem dezenas de pequenos contornos quando a mão traz um
-        # novo objeto. Como filtrar os menores contornos?
-        # Depois, identificar o maior contorno pois o esperado é que apenas um
-        # instrumento esteja no centro da imagem. Usar o bounding box para delimitar
-        # uma região de interesse e salvar apenas uma cópia dessa ROI.
-        # Enquanto houver um objeto na mesa, comparar o objeto com a cópia da ROI
-        #
-
         print(f'foram encontrados {len(contours)} contornos.')
         for contour in contours:
             area = cv2.contourArea(contour)
@@ -422,27 +528,49 @@ if __name__ == '__main__':
 
             # Desenhar contorno válido e exibir mensagem
             # x, y, w, h = cv2.boundingRect(valid_contour)
-            cv2.rectangle(preproc_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.rectangle(preproc_image, (x, y), (x + w, y + h),
+                          (0, 255, 0), 2)
 
         # Mostrar o reduced para depuração
         # cv2.imshow("Frame", reduced[50:400, 350:600])
         # cv2.imshow("Mascara", clean_mask[50:400, 350:600])
         clean_mask_3ch = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
         preproc_image_3ch = cv2.cvtColor(preproc_image, cv2.COLOR_GRAY2BGR)
+
+        # Calcular o tempo decorrido em segundos
+        time_elapsed = frame_count / fps
+        minutes = int(time_elapsed // 60)
+        seconds = int(time_elapsed % 60)
+
+        # Adicionar o tempo como overlay no frame
+        overlay_text = f"Tempo: {minutes:02}:{seconds:02}"
+        cv2.putText(preproc_image_3ch, overlay_text, (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0, 255, 255), 2)
+        
         if len(contours):
-            cv2.rectangle(preproc_image_3ch, (x_min, y_min), (x_min + (x_max - x_min), y_min + (y_max - y_min)), (0, 255, 0), 2)
-        combined_view = cv2.hconcat([preproc_image_3ch, clean_mask_3ch])  # clean_mask_3ch
+            cv2.rectangle(preproc_image_3ch, (x_min, y_min),
+                          (x_min + (x_max - x_min), y_min + (y_max - y_min)),
+                          (0, 255, 0), 2)
+        combined_view = cv2.hconcat([preproc_image_3ch, clean_mask_3ch])
+        # clean_mask_3ch
 
-        cv2.imshow("Preprocessed image (Left) vs Object Mask (Right)", combined_view)
+        cv2.imshow("Preprocessed image (Left) vs Object Mask (Right)",
+                   combined_view)
 
+        frame_count += 1
         # Finalizar com tecla 'q'
-        if cv2.waitKey(130) & 0xFF == ord("q"):
+        if cv2.waitKey(int(1000 / fps)) & 0xFF == ord("q"):
             break
 
+    # Decifrar as causas de erros
+    if system_status == "errorCamera":
+        print('erro na câmera')
+
     # Finalizar e fechar janela gráfica
-    cap.release()
-    plt.ioff()
-    plt.show()
+    # cap.release()
+    # plt.ioff()
+    # plt.show()
 
     # print(frame.shape)
     cv2.waitKey(0)
