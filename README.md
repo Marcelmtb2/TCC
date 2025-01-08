@@ -29,6 +29,73 @@ and it is more sensitive to variations in the illumination levels of the scene t
 Background detection established, Contour detection established, color histogram analysis as redundancy
 for contour detection.
 
+26-dez -> Resolvido problemas de ruído de cor. Descartar imagens com iluminação
+baixa. Padronizar iluminação resolve parcialmente. Iluminação usada segue
+o padronizado pelo ministério do trabalho, pela NR-17, e ABNT, pela NBR5413.
+Videos com o instrumento mock padronizaram o nível mínimo de iluminação para
+800 lux, acima dos 750 lux exigidos para um ambiente de trabalho como o do
+CME. Foi usado um aplicativo de celular para fazer a medição. A margem de
+50 lux foi para contornar algum problema de calibração da câmera de celular
+usada para a medição do nível de luminosidade.
+Filtragem adicional usada foi a Bilateral. Filtrou ruídos tipo "shot noise"
+e suavizou o "temporal noise", característicos de sensores tipo CCD ou CMOS.
+Testado pré-processamento antes de aplicar o subtrator, como equalização
+de histograma grayscale para aumentar o contraste, mas não funciona, pois
+adicionou muito ruído de imagem.
+Para processar a máscara, usar operações morfológicas para melhorar a
+qualidade da máscara calculada. Testado dilatação, evitou quebras de
+contiguidade do objeto em cena. Funcionou melhor do que usar o Fechamento,
+pois evitou a divisão do contorno de objetos presentes na cena devido a
+variações pequenas de cor.
+Usar Fechamento causou quebras de contorno e partiu o contorno do objeto
+em algumas situações de sombreamento em objetos no campo de visão.
+Comparado o subtrator tanto o MOG2 com o KNN, com as conclusões de
+não usar KNN por gerar mais ruído de pixels. MoG2 será configurado para
+ter taxa de aprendizado (learningRate) variando, de acordo com a condição
+do ambiente.
+Primeiro caso a resolver é do de alteração brusca de iluminação, que cria
+vários artefatos de identificação pequenos. O segundo é quando o objeto
+está presente na cena desde o início, atrapalhando a aquisição do frame
+de referência. Tornar o learningRate muito alto (0.9~1.0), menos frames
+são usados para calcular o background, e o algoritmo se adapta mais
+rápido às novas condições.
+Ideia de implementação é iniciar o programa com taxa muito alta e baixar
+a taxa para muito lenta quando se perceber alguma movimentação de objeto.
+Gravados novos vídeos com o mock de instrumental de laparoscopia
+Não foi possível reajustar a altura da câmera para não pegar o suporte
+Ver como se faz para calibrar a câmera para corrigir distorções
+tipo "pincushion" que produzem distorção esférica em torno do centro
+da imagem
+Refazer os vídeos com as seguintes condições:
+- Entrada e saída simples de objeto do campo de visão da câmera
+- Entrada, e rotação do objeto antes da saída
+- Entrada e saída de 2x do mesmo objeto, para identificar 2 objetos
+diferentes
+- Mudanças de iluminação
+- Baixa iluminação
+Resumo dos parâmetros do subtrator tipo MixOfGaussians2
+
+Parâmetro history: Define número de frames para calcular o background.
+Aumentar o valor torna o sistema mais robusto contra mudanças
+rápidas, mas com resposta mais lenta a objetos que se tornam estáticos.
+Padrão = 500
+
+Parâmetro varThreshold: Controla a sensibilidade para decidir se um pixel
+pertence ao foreground. Aumente para reduzir ruídos de iluminação.
+Limiar para decisão de "objeto em movimento" com base na variância das
+Gaussianas do modelo.
+Padrão = 16.0
+Valores menores: Mais sensível a pequenas variações, como ruídos e
+leves mudanças no fundo.
+
+Parâmetro detectShadows: Ativa (Default = True) para lidar com sombras. Isso
+classifica pixels de sombra como "quase foreground" com um tom mais escuro.
+fgbgKNN = cv2.createBackgroundSubtractorKNN(history=500, dist2Threshold=400)
+Resumo dos parâmetros do subtrator tipo KNN
+dist2Threshold: Define a distância para considerar um pixel como parte do
+foreground. Valores maiores tornam o método mais tolerante a variações.
+Parâmetro history: Funciona identicamente ao MOG2.
+
 ## Optical detection state machine
 
 Object detection will follow 4 steps: 
