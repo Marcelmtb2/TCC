@@ -2,7 +2,14 @@
 from __future__ import print_function
 import cv2 as cv
 import argparse
-
+# TODO: Aplicar métodos de cor, histograma e identificar na imagem colorida,
+# para identificar se há objeto presente desde o início da filmagem e para
+# obter perfil de RGB/HSV do background.
+# Contour Detection encontra os bounding boxes, mas devem ser filtrados.
+# Será usado o critério de proximidade dos contornos às bordas da imagem.
+# Métodos de cor e Histograma obtém perfil do background no início do
+# funcionamento do sistema, e identificam facilmente a cor dos objetos
+# inseridos na imagem.
 max_value = 255
 max_value_H = 360 // 2
 low_H = 0
@@ -72,7 +79,8 @@ def on_high_V_thresh_trackbar(val):
 parser = argparse.ArgumentParser(
     description="Code for Thresholding Operations using inRange tutorial."
 )
-parser.add_argument("--camera", help="Camera divide number.", default=0, type=int)
+parser.add_argument("--camera", help="Camera divide number.",
+                    default=0, type=int)
 args = parser.parse_args()
 
 pasta = "video\\videosMock\\"
@@ -117,23 +125,23 @@ cv.namedWindow(window_detection_name)
 
 
 cv.createTrackbar(
-    low_H_name, window_detection_name, low_H, max_value_H, on_low_H_thresh_trackbar
-)
+    low_H_name, window_detection_name, low_H, max_value_H,
+    on_low_H_thresh_trackbar)
 cv.createTrackbar(
-    high_H_name, window_detection_name, high_H, max_value_H, on_high_H_thresh_trackbar
-)
+    high_H_name, window_detection_name, high_H, max_value_H,
+    on_high_H_thresh_trackbar)
 cv.createTrackbar(
-    low_S_name, window_detection_name, low_S, max_value, on_low_S_thresh_trackbar
-)
+    low_S_name, window_detection_name, low_S, max_value,
+    on_low_S_thresh_trackbar)
 cv.createTrackbar(
-    high_S_name, window_detection_name, high_S, max_value, on_high_S_thresh_trackbar
-)
+    high_S_name, window_detection_name, high_S, max_value,
+    on_high_S_thresh_trackbar)
 cv.createTrackbar(
-    low_V_name, window_detection_name, low_V, max_value, on_low_V_thresh_trackbar
-)
+    low_V_name, window_detection_name, low_V, max_value,
+    on_low_V_thresh_trackbar)
 cv.createTrackbar(
-    high_V_name, window_detection_name, high_V, max_value, on_high_V_thresh_trackbar
-)
+    high_V_name, window_detection_name, high_V, max_value,
+    on_high_V_thresh_trackbar)
 
 
 while True:
@@ -142,7 +150,8 @@ while True:
     if frame is None:
         break
 
-    frame = cv.resize(frame, None, fx=0.25, fy=0.25, interpolation=cv.INTER_AREA)
+    frame = cv.resize(frame, None, fx=0.25, fy=0.25,
+                      interpolation=cv.INTER_AREA)
 
     frame_HSV = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
     frame_threshold = cv.inRange(
