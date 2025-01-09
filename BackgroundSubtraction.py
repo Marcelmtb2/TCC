@@ -40,7 +40,7 @@ def find_object_at_start(image, object_at_start_flag=False):
     # Recebe imagem pré-processada
 
     # Se o objeto mais escuro que o plano de fundo verde, em escala de cinza
-    thresh_dark = cv2.threshold(image, 120, 255, cv2.THRESH_BINARY_INV)[1]
+    thresh_dark = cv2.threshold(image, 90, 255, cv2.THRESH_BINARY_INV)[1]
     cv2.imshow("mascara dark", thresh_dark)
     # Se o objeto mais claro que o plano de fundo verde, em escala de cinza
     thresh_light = cv2.threshold(image, 200, 255, cv2.THRESH_BINARY)[1]
@@ -52,8 +52,9 @@ def find_object_at_start(image, object_at_start_flag=False):
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
     # se algum contorno for identificado, retornar true
+    output_image = image.copy()
     if len(contours):
-        width_img_gray, height_img_gray = image.shape[0:2]
+        width_img_gray, height_img_gray = output_image.shape[0:2]
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
 
@@ -63,11 +64,11 @@ def find_object_at_start(image, object_at_start_flag=False):
             if w >= 0.9 * width_img_gray:  # se um contorno de sombra atravessa
                 # a imagem de um lado a outro
                 return False
-            cv2.rectangle(image, (x, y), (x + w, y + h),
+            cv2.rectangle(output_image, (x, y), (x + w, y + h),
                           (0, 0, 255), 2)
         # visualize the binary image
-        cv2.imshow('Binary image', image)
-        cv2.waitKey(0)
+        cv2.imshow('Binary image', output_image)
+        # cv2.waitKey(0)
         return True
     return False
     # find contours of objects before background subtraction. If there are any
@@ -117,12 +118,12 @@ def find_foreground_object(image, learning_rate=0.0001):
     fgmaskMOG2 = fgbgMOG2.apply(image, learningRate=learning_rate)
     thresh_mask = cv2.threshold(fgmaskMOG2, 210, 255, cv2.THRESH_BINARY)[1]
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    clean_mask = cv2.dilate(thresh_mask, kernel, iterations=2)
+    clean_mask = cv2.dilate(thresh_mask, kernel, iterations=4)
     return clean_mask
 
 
 def identify_contours(object_found_binary_mask):
-    # Define contornos do possível objeto
+    # Localiza contornos do possível objeto
     # Geralmente, não será possível identificar perfeitamente o objeto apenas
     # com a subtração de background
     # Se houver atividade da subtração de background, classificar se os pixels
@@ -134,56 +135,54 @@ def identify_contours(object_found_binary_mask):
     # Retorna True ou False para objeto detectado ou não
 
     # Detecção de contornos na máscara calculada
-    contours = cv2.findContours(object_found_binary_mask, cv2.RETR_EXTERNAL,
-                                cv2.CHAIN_APPROX_SIMPLE)
-
-    mask_height, mask_width = object_found_binary_mask.shape
-    image_border = 10  # Distância mínima das bordas de 10 pixels
+    mask_height, mask_width = object_found_binary_mask.shape  # Dimensões da imagem
+    size_border_factor = 0.01  # Distância mínima das bordas de 10 pixels
+    margin_top_bot = int(mask_height * size_border_factor)
+    margin_left_right = int(mask_width * size_border_factor)
+    # fazer essa borda como percentual, entre 2 a 5% da dimensão H ou W?
     valid_contours = []
     border_contours = []
+    final_object_box = ()
+    # Detecção de contornos na máscara calculada
+    contours = cv2.findContours(object_found_binary_mask, cv2.RETR_EXTERNAL,
+                                cv2.CHAIN_APPROX_SIMPLE)[0]
     for contour in contours:
-        x_0, y_0, x_1, y_1 = cv2.boundingRect(contour)
-        # Verificar se o contorno está longe das bordas
-        # X0,y0 e x1,y1 são coordenadas da diagonal do contorno
-        bool_top_corner = x_0 > image_border and y_0 > image_border
-        bool_bot_corner1 = (x_0 + x_1) < mask_width - image_border
-        bool_bot_corner2 = (y_0 + y_1) < mask_height - image_border
-
-        if bool_bot_corner1 and bool_bot_corner2 and bool_top_corner:
-            valid_contours.append(contour)
-        else:
-            border_contours.append(contour)
-    # Criar uma lista de bounding boxes, se existirem
-    if len(contours):
-        bounding_boxes = [cv2.boundingRect(c) for c in contours]
-
-        # Agrupar bounding boxes próximas
-        x_min = min([x for (x, y, w_box, h_box) in bounding_boxes])
-        y_min = min([y for (x, y, w_box, h_box) in bounding_boxes])
-        x_max = max([x + w_box for (x, y, w_box, h_box) in bounding_boxes])
-        y_max = max([y + h_box for (x, y, w_box, h_box) in bounding_boxes])
-
-        # Caixa circundante final
-        final_bounding_box = (x_min, y_min, x_max - x_min, y_max - y_min)
-
-    # identificando quais contornos estão em contato com a borda
-    # agrupar apenas os contornos longe da borda
-    # se algum contorno em contato com a borda se aproximar do
-    # objeto, considerar como sendo a mão do operador.
-    
-    
-
-    print(f'foram encontrados {len(contours)} contornos.')
-    for contour in contours:
-        # area = cv2.contourArea(contour)
-        # if area > MIN_CONTOUR_AREA:
-        # Obter as coordenadas do retângulo delimitador
         x, y, w, h = cv2.boundingRect(contour)
+        # Verificar se cada contorno está longe das bordas da imagem
+        top_left_away_border = ((x > margin_left_right) and
+                                (y > margin_top_bot))
 
-        # Desenhar contorno válido e exibir mensagem
-        # x, y, w, h = cv2.boundingRect(valid_contour)
-        cv2.rectangle(preproc_image, (x, y), (x + w, y + h),
-                      (0, 255, 0), 2)
+        top_right_away_border = (((x + w) < (mask_width - margin_left_right))
+                                 and (y > margin_top_bot))
+
+        bot_left_away_border = ((x > margin_left_right) and
+                                ((y + h) < (mask_height - margin_top_bot)))
+
+        bot_right_away_border = (((x + w) < (mask_width - margin_left_right)) and
+                                 ((y + h) < (mask_height - margin_top_bot)))
+
+        image_away_borders = (top_left_away_border and
+                              top_right_away_border and
+                              bot_left_away_border and
+                              bot_right_away_border)  # True if away
+
+        if image_away_borders:
+            valid_contours.append((x, y, w, h))
+        else:
+            border_contours.append((x, y, w, h))
+
+    # Criar uma lista de bounding boxes, se existirem contornos
+    if len(valid_contours):
+        # Agrupar bounding boxes próximas
+        x_min = min([x for (x, y, w_box, h_box) in valid_contours])
+        y_min = min([y for (x, y, w_box, h_box) in valid_contours])
+        x_max = max([x + w_box for (x, y, w_box, h_box) in valid_contours])
+        y_max = max([y + h_box for (x, y, w_box, h_box) in valid_contours])
+
+        # Caixa circundante final do objeto estimado
+        final_object_box = (x_min, y_min, x_max - x_min, y_max - y_min)
+
+    return valid_contours, border_contours, final_object_box
 
 
 def analyze_hsv(frame):
@@ -368,7 +367,7 @@ if __name__ == '__main__':
     objeto24 = "ContrasteTemperaturaCor3k_9k.mp4"
 
     # selecionar o video do objeto
-    objeto = objeto11
+    objeto = objeto9
 
     # ====================================
     # Adicionar marcações para a máquina de estados!
@@ -435,81 +434,72 @@ if __name__ == '__main__':
         preproc_image = preprocess_image(frame)
 
         # verificar se há objeto desde o início será a ultima atividade!!
-        # # Verificar se o primeiro frame contém contornos de um objeto.
-        # if object_at_start_flag:
-        #     object_at_start_flag = find_object_at_start(preproc_image)
-        #     learning_rate = 0.1
-        #     # No primeiro loop do programa, considera que há objeto
-        #     # presente na imagem, configurando o learningRate para valor alto,
-        #     # maior que 0.01. Em seguida, testa se não existe contorno de
-        #     # algum objeto na primeira imagem recebida.
-        #     # Caso exista o objeto, manter a taxa alta.
-        # else:
-        learning_rate = 0.0001
+        # Verificar se o primeiro frame contém contornos de um objeto.
+        if object_at_start_flag:
+            object_at_start_flag = find_object_at_start(preproc_image)
+            learning_rate = 0.1
+            # No primeiro loop do programa, considera que há objeto
+            # presente na imagem, configurando o learningRate para valor alto,
+            # maior que 0.01. Em seguida, testa se não existe contorno de
+            # algum objeto na primeira imagem recebida.
+            # Caso exista o objeto, manter a taxa alta.
+        else:
+            learning_rate = 0.0001
         # Se retornar False, manter a taxa de aprendizado baixa, para
         # melhorar a persistência do objeto na máscara calculada
 
         clean_mask = find_foreground_object(preproc_image, learning_rate)
 
-        # ---------------------------------------------- Transformar em função
-        mask_height, mask_width = clean_mask.shape  # Dimensões da imagem
-        image_border = 10  # Distância mínima das bordas de 10 pixels
-        # fazer essa borda como percentual, entre 2 a 5% da dimensão H ou W
-        valid_contours = []
-        border_contours = []
-        # Detecção de contornos na máscara calculada
-        contours = cv2.findContours(clean_mask, cv2.RETR_EXTERNAL,
-                                    cv2.CHAIN_APPROX_SIMPLE)[0]
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            # Verificar se o contorno está longe das bordas
-            top_left_corner = x > image_border and y > image_border
-            top_right_corner = (x+w) < (mask_width - w) and (y+w) < (mask_height - w)
-            bot_left_corner = (x_0 + x_1) < mask_width - image_border
-            bot_right_corner = (y_0 + y_1) < mask_height - image_border
+        # Visualização não será parte da versão final
 
-            if bool_bot_corner1 and bool_bot_corner2 and bool_top_corner:
-                valid_contours.append(contour)
-            else:
-                border_contours.append(contour)
+        clean_mask_3ch = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
+        preproc_image_3ch = cv2.cvtColor(preproc_image, cv2.COLOR_GRAY2BGR)
 
-        # Criar uma lista de bounding boxes, se existirem
-        if len(contours):
-            bounding_boxes = [cv2.boundingRect(c) for c in contours]
+        valid_contours, border_contours, final_object_box = identify_contours(clean_mask)
+            # Redundância necessária!
+            # Como os objetos válidos, às vezes, não são reconhecidos com um
+            # contorno único. Foi necessário combinar as coordenadas de
+            # todos os bounding boxes para encontrar a região esperada para o
+            # Objeto.
+            # Dessa forma, quando for encontrada um final_object_box, passar
+            # para a identificação de contorno na imagem original
 
-            # Agrupar bounding boxes próximas
-            x_min = min([x for (x, y, w_box, h_box) in bounding_boxes])
-            y_min = min([y for (x, y, w_box, h_box) in bounding_boxes])
-            x_max = max([x + w_box for (x, y, w_box, h_box) in bounding_boxes])
-            y_max = max([y + h_box for (x, y, w_box, h_box) in bounding_boxes])
-
-            # Caixa circundante final
-            final_bounding_box = (x_min, y_min, x_max - x_min, y_max - y_min)
 
             # identificando quais contornos estão em contato com a borda
             # agrupar apenas os contornos longe da borda
             # se algum contorno em contato com a borda se aproximar do
             # objeto, considerar como sendo a mão do operador.
-        
-        
+# _____________________________
+# Drawing is not part of final version
 
-        print(f'foram encontrados {len(contours)} contornos.')
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            # if area > MIN_CONTOUR_AREA:
-            # Obter as coordenadas do retângulo delimitador
-            x, y, w, h = cv2.boundingRect(contour)
+            # Draw valid contours in purple, final object box in green and
+            # border contours in red
+        if len(valid_contours):
+            cv2.rectangle(preproc_image_3ch,
+                          final_object_box,
+                          (0, 255, 0), 5)
+            cv2.rectangle(clean_mask_3ch,
+                          final_object_box,
+                          (0, 255, 0), 5)
+            for ok_contour in valid_contours:
+                x, y, w, h = ok_contour
+                cv2.rectangle(preproc_image_3ch, (x, y), (x + w, y + h),
+                              (255, 0, 255), 2)
+                cv2.rectangle(clean_mask_3ch, (x, y), (x + w, y + h),
+                              (255, 0, 255), 2)
+        if len(border_contours):
+            for bad_contour in border_contours:
+                x, y, w, h = bad_contour
+                cv2.rectangle(preproc_image_3ch, (x, y), (x + w, y + h),
+                              (0, 0, 255), 2)
+                cv2.rectangle(clean_mask_3ch, (x, y), (x + w, y + h),
+                              (0, 0, 255), 2)
 
-            # Desenhar contorno válido e exibir mensagem
-            # x, y, w, h = cv2.boundingRect(valid_contour)
-            cv2.rectangle(preproc_image, (x, y), (x + w, y + h),
-                          (0, 255, 0), 2)
-
-        # Mostrar o reduced para depuração
-        # cv2.imshow("Frame", reduced[50:400, 350:600])
-        # cv2.imshow("Mascara", clean_mask[50:400, 350:600])
-        clean_mask_3ch = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
-        preproc_image_3ch = cv2.cvtColor(preproc_image, cv2.COLOR_GRAY2BGR)
+#         print(f'foram encontrados {len(valid_contours) + len(border_contours)}\
+# contornos.')
+#         print(f'foram encontrados {len(valid_contours)} contornos válidos.')
+#         print(f'foram encontrados {len(border_contours)} contornos na borda.')
+#         print()
 
         # Calcular o tempo decorrido em segundos
         time_elapsed = frame_count / fps
@@ -522,12 +512,6 @@ if __name__ == '__main__':
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1, (0, 255, 255), 2)
 
-        if len(contours):
-            cv2.rectangle(preproc_image_3ch,
-                          final_bounding_box,
-                        #   (x_min, y_min),
-                        #   (x_min + (x_max - x_min), y_min + (y_max - y_min)),
-                          (0, 255, 0), 2)
         combined_view = cv2.hconcat([preproc_image_3ch, clean_mask_3ch])
         # clean_mask_3ch
 
