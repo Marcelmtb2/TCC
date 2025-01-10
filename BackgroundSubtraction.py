@@ -30,7 +30,7 @@ def config_object_capture():
     return fgbgMOG2
 
 
-def find_object_at_start(image, object_at_start_flag=False):
+def is_object_at_image(image, show_overlay=False):
     # Verificar se o primeiro frame contém contornos de um objeto.
     # Configurar o método de subtração de background com uma taxa
     # de aprendizado muito alta, para adaptar rapidamente o plano
@@ -39,44 +39,57 @@ def find_object_at_start(image, object_at_start_flag=False):
     # de cinza ou aplicar filtro Canny para evidenciar bordas de contornos
     # Recebe imagem pré-processada
 
+    # Descobrir como fazer o threshold dinâmico! Para contornar condições
+    # de baixa iluminação
+
     # Se o objeto mais escuro que o plano de fundo verde, em escala de cinza
     thresh_dark = cv2.threshold(image, 90, 255, cv2.THRESH_BINARY_INV)[1]
-    cv2.imshow("mascara dark", thresh_dark)
+
     # Se o objeto mais claro que o plano de fundo verde, em escala de cinza
     thresh_light = cv2.threshold(image, 200, 255, cv2.THRESH_BINARY)[1]
-    cv2.imshow("mascara light", thresh_light)
-    # Máscara final é a combinação bitwise or das duas máscaras
 
+    # Máscara final é a combinação bitwise or das duas máscaras. Histerese
+    # tenta escapar de sombras sobre o lençol verde.
     thresh = cv2.bitwise_or(thresh_dark, thresh_light)
-    cv2.imshow("mascara lightORdark", thresh)
+
+    # se algum contorno for identificado, retornar true
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
-    # se algum contorno for identificado, retornar true
-    output_image = image.copy()
-    if len(contours):
-        width_img_gray, height_img_gray = output_image.shape[0:2]
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
 
-            # Problema: Se houver sombra nítida, será confundido com
-            # um objeto. Usar "margem de histerese" ao definir os thresholds
-            # das máscaras de objetos claros e objetos escuros
-            if w >= 0.9 * width_img_gray:  # se um contorno de sombra atravessa
-                # a imagem de um lado a outro
-                return False
-            cv2.rectangle(output_image, (x, y), (x + w, y + h),
-                          (0, 0, 255), 2)
-        # visualize the binary image
-        cv2.imshow('Binary image', output_image)
-        # cv2.waitKey(0)
-        return True
+    if len(contours):
+        if show_overlay:
+            # Copy image to avoid modifying it
+            output_image = image.copy()
+
+            # Show binary masks
+            cv2.imshow("mascara dark", thresh_dark)
+            cv2.imshow("mascara light", thresh_light)
+            cv2.imshow("mascara lightORdark", thresh)
+            width_img_gray, height_img_gray = output_image.shape[0:2]
+
+            # Draw all contours found
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+
+                # Problema: Se houver sombra nítida, será confundido com
+                # um objeto. Usar "margem de histerese" ao definir os thresholds
+                # das máscaras de objetos claros e objetos escuros
+                if w >= 0.9 * width_img_gray:  # se um contorno de sombra atravessa
+                    # a imagem de um lado a outro
+                    return False
+                cv2.rectangle(output_image, (x, y), (x + w, y + h),
+                              (0, 0, 255), 2)
+            # visualize the binary image
+            cv2.imshow('Binary image', output_image)
+            # cv2.waitKey(0)
+        return True, contours
     return False
     # find contours of objects before background subtraction. If there are any
     # contours, max out the learningRate parameter to 0.1 until no object is
     # present in the image
 
 
-def preprocess_image(image):
+def preprocess_image(image, show_overlay=False):
     # filtrar ruído de digitalização da câmera.
     # Testados filtros para os casos com baixa iluminação
 
@@ -103,7 +116,8 @@ def preprocess_image(image):
     gray_frame = cv2.cvtColor(f_bilateral, cv2.COLOR_BGR2GRAY)
 
     # Debug - ver a imagem original, antes de filtrar
-    cv2.imshow("Imagem cortada e redimensionada", reduced)
+    if show_overlay:
+        cv2.imshow("Imagem cortada e redimensionada", reduced)
 
     return gray_frame
 
@@ -389,7 +403,6 @@ if __name__ == '__main__':
 
     # se usada a câmera principal, comentar linha anterior e descomentar esta
     # device = 0
-
     cap = cv2.VideoCapture(device)
 
     # Inicializar o subtrator de background com valores default.
@@ -399,9 +412,6 @@ if __name__ == '__main__':
     # Caso o primeiro frame do vídeo tenha contornos de objeto, manter
     # flag object_at_start_flag em True
     object_at_start_flag = True
-
-    # Flag para debugar estado do sistema
-    system_status = "None"
 
     # _____________
     # Separando código para visualizar resultados durante o desenvolvimento
@@ -436,7 +446,7 @@ if __name__ == '__main__':
         # verificar se há objeto desde o início será a ultima atividade!!
         # Verificar se o primeiro frame contém contornos de um objeto.
         if object_at_start_flag:
-            object_at_start_flag = find_object_at_start(preproc_image)
+            object_at_start_flag, _ = is_object_at_image(preproc_image)
             learning_rate = 0.1
             # No primeiro loop do programa, considera que há objeto
             # presente na imagem, configurando o learningRate para valor alto,
@@ -446,14 +456,9 @@ if __name__ == '__main__':
         else:
             learning_rate = 0.0001
         # Se retornar False, manter a taxa de aprendizado baixa, para
-        # melhorar a persistência do objeto na máscara calculada
+        # aumentar a persistência do objeto na máscara calculada
 
         clean_mask = find_foreground_object(preproc_image, learning_rate)
-
-        # Visualização não será parte da versão final
-
-        clean_mask_3ch = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
-        preproc_image_3ch = cv2.cvtColor(preproc_image, cv2.COLOR_GRAY2BGR)
 
         valid_contours, border_contours, final_object_box = identify_contours(clean_mask)
             # Redundância necessária!
@@ -474,6 +479,11 @@ if __name__ == '__main__':
 
             # Draw valid contours in purple, final object box in green and
             # border contours in red
+
+        # Visualização não será parte da versão final
+
+        clean_mask_3ch = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
+        preproc_image_3ch = cv2.cvtColor(preproc_image, cv2.COLOR_GRAY2BGR)
         if len(valid_contours):
             cv2.rectangle(preproc_image_3ch,
                           final_object_box,
