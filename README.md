@@ -1,7 +1,7 @@
 # TCC
 Code for supporting Course Completion Thesis
 
-https://www.overleaf.com/project/66756f7949fa86f5621092dd - main document
+https://www.overleaf.com/read/qtvktdpbqmhn#b49f6f - main document
 
 https://docs.google.com/spreadsheets/d/1Ei4KCWnIAcxXeuaU7s_CjdYAXi2lLIhsc_yA3M1kWf8/edit?gid=0#gid=0 - related documents
 
