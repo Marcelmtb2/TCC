@@ -19,6 +19,16 @@ Returns:
 
 
 # inicializar sistema de captura de objetos
+def initialize_bg_sub(device=0):
+    # Recebe o endereço do dispositivo, se arquivo de video ou stream da
+    # câmera do computador.
+    # Retorna os handlers do objeto da câmera e o da instância do objeto
+    # backgroundsubtractor
+    foregroundbackgroundMOG2 = config_object_capture()
+    camera = cv2.VideoCapture(device)
+    return [camera, foregroundbackgroundMOG2]
+
+
 def config_object_capture():
 
     # Inicializar o subtrator de background com valores default
@@ -76,14 +86,14 @@ def is_object_at_image(image, show_overlay=False):
                 # das máscaras de objetos claros e objetos escuros
                 if w >= 0.9 * width_img_gray:  # se um contorno de sombra atravessa
                     # a imagem de um lado a outro
-                    return False
+                    return [False, contours]
                 cv2.rectangle(output_image, (x, y), (x + w, y + h),
                               (0, 0, 255), 2)
             # visualize the binary image
             cv2.imshow('Binary image', output_image)
             # cv2.waitKey(0)
-        return True, contours
-    return False
+        return [True, contours]
+    return [False, contours]
     # find contours of objects before background subtraction. If there are any
     # contours, max out the learningRate parameter to 0.1 until no object is
     # present in the image
@@ -111,6 +121,8 @@ def preprocess_image(image, show_overlay=False):
     # Filtrando o ruído de digitalização da câmera
     f_bilateral = cv2.bilateralFilter(reduced, d=9, sigmaColor=75,
                                       sigmaSpace=125)
+    
+    f_bilateral = cv2.GaussianBlur()
 
     # Conversão para tons de cinza
     gray_frame = cv2.cvtColor(f_bilateral, cv2.COLOR_BGR2GRAY)
@@ -277,10 +289,15 @@ def analyze_hsv(frame):
     plt.show()
 
 
-def locate_object(image):
+def locate_object(image, learning_rate=0.0001):
     # Recebe imagem preprocessada, retorna máscara e bounding box do objeto
-    #
-    pass
+    preproc_image = preprocess_image(image)
+    clean_mask = find_foreground_object(preproc_image, learning_rate)
+    (valid_boxes,
+     border_boxes,
+     final_object_box) = identify_contours(clean_mask)
+
+    return valid_boxes, border_boxes, final_object_box
 
 
 def check_capture_conditions():
@@ -381,32 +398,16 @@ if __name__ == '__main__':
     objeto24 = "ContrasteTemperaturaCor3k_9k.mp4"
 
     # selecionar o video do objeto
-    objeto = objeto9
-
-    # ====================================
-    # Adicionar marcações para a máquina de estados!
-    # Descobrir como chamar as funções de transição da máquina
-    # de estados.
-    # Fazer o programa de forma que as funções de processamento
-    # de imagem sejam chamadas pelos estados correspondentes da
-    # máquina de estados.
-    # ====================================
-
-    # ====================================
-    # Estado 0 - Inicializar
-    # Configura o sistema para condição mínima de funcionamento.
-    # ====================================
+    objeto = objeto16
 
     # Considerar na versão final que o dispositivo deve ser uma câmera
     # Inicializar captura de imagens
     device = pasta + objeto
-
-    # se usada a câmera principal, comentar linha anterior e descomentar esta
+    # se usada a câmera principal, comentar linha anterior e descomentar
+    # a linha seguinte
     # device = 0
-    cap = cv2.VideoCapture(device)
 
-    # Inicializar o subtrator de background com valores default.
-    fgbgMOG2 = config_object_capture()
+    cap, fgbgMOG2 = initialize_bg_sub(device)
 
     # Inicializar a checagem de presença de objeto no início do vídeo.
     # Caso o primeiro frame do vídeo tenha contornos de objeto, manter
@@ -437,7 +438,6 @@ if __name__ == '__main__':
         ret, frame = cap.read()
         if not ret:
             print('Câmera não enviou imagens. Conferir o equipamento.')
-            system_status = "errorCamera"
             break
 
         # Pré-processar a imagem, filtrando ruídos e redimensionando.
@@ -446,7 +446,7 @@ if __name__ == '__main__':
         # verificar se há objeto desde o início será a ultima atividade!!
         # Verificar se o primeiro frame contém contornos de um objeto.
         if object_at_start_flag:
-            object_at_start_flag, _ = is_object_at_image(preproc_image)
+            object_at_start_flag = is_object_at_image(preproc_image)[0]
             learning_rate = 0.1
             # No primeiro loop do programa, considera que há objeto
             # presente na imagem, configurando o learningRate para valor alto,
@@ -460,20 +460,50 @@ if __name__ == '__main__':
 
         clean_mask = find_foreground_object(preproc_image, learning_rate)
 
-        valid_contours, border_contours, final_object_box = identify_contours(clean_mask)
-            # Redundância necessária!
-            # Como os objetos válidos, às vezes, não são reconhecidos com um
-            # contorno único. Foi necessário combinar as coordenadas de
-            # todos os bounding boxes para encontrar a região esperada para o
-            # Objeto.
-            # Dessa forma, quando for encontrada um final_object_box, passar
-            # para a identificação de contorno na imagem original
+        temp_a, temp_b, temp_c = identify_contours(clean_mask)
 
+        valid_boxes, border_boxes, final_object_box = temp_a, temp_b, temp_c
+        # Redundância necessária!
+        # Como os objetos válidos, às vezes, não são reconhecidos com um
+        # contorno único. Foi necessário combinar as coordenadas de
+        # todos os bounding boxes para encontrar a região esperada para o
+        # Objeto.
+        # Dessa forma, quando for encontrada um final_object_box, passar
+        # para a identificação de contorno na imagem original
+        if valid_boxes and not border_boxes:
+            mask_MOG2 = np.zeros_like(clean_mask)
+            x, y, w, h = final_object_box
+            cv2.rectangle(mask_MOG2, (x, y), (x + w, y + h), 255,
+                          thickness=cv2.FILLED)
+            #cv2.imshow("maskMOG2", mask_MOG2)
+            mask_object = np.zeros_like(clean_mask)
+            instant_contours = is_object_at_image(preproc_image)[1]
+            # Recebe a saída contours
+            if instant_contours:  # Pode existir um caso em que
+                # há valid_boxes com apenas um contorno e nenhum
+                # contorno identificado na imagem original
+                # O restante do processo só existe se houverem
+                # as duas máscaras
+                x, y, w, h = cv2.boundingRect(np.vstack(instant_contours))
+                cv2.rectangle(mask_object, (x, y), (x + w, y + h), 255,
+                              thickness=cv2.FILLED)
+                #cv2.imshow("objectContour", mask_object)
+                intersection = cv2.bitwise_and(mask_MOG2, mask_object)
+                union = cv2.bitwise_or(mask_MOG2, mask_object)
 
-            # identificando quais contornos estão em contato com a borda
-            # agrupar apenas os contornos longe da borda
-            # se algum contorno em contato com a borda se aproximar do
-            # objeto, considerar como sendo a mão do operador.
+                intersection_area = np.sum(intersection > 0)
+                union_area = np.sum(union > 0)
+
+                iou = intersection_area / union_area
+                # Calcule o índice de Jaccard (IoU)
+                # Defina um limite para considerar uma boa coincidência
+                threshold = 0.8
+                print(iou)
+                if iou > threshold:
+                    print("Contorno e máscara coincidem!")
+                else:
+                    print("Diferença significativa entre contorno e máscara.")
+
 # _____________________________
 # Drawing is not part of final version
 
@@ -484,21 +514,21 @@ if __name__ == '__main__':
 
         clean_mask_3ch = cv2.cvtColor(clean_mask, cv2.COLOR_GRAY2BGR)
         preproc_image_3ch = cv2.cvtColor(preproc_image, cv2.COLOR_GRAY2BGR)
-        if len(valid_contours):
+        if len(valid_boxes):
             cv2.rectangle(preproc_image_3ch,
                           final_object_box,
                           (0, 255, 0), 5)
             cv2.rectangle(clean_mask_3ch,
                           final_object_box,
                           (0, 255, 0), 5)
-            for ok_contour in valid_contours:
+            for ok_contour in valid_boxes:
                 x, y, w, h = ok_contour
                 cv2.rectangle(preproc_image_3ch, (x, y), (x + w, y + h),
                               (255, 0, 255), 2)
                 cv2.rectangle(clean_mask_3ch, (x, y), (x + w, y + h),
                               (255, 0, 255), 2)
-        if len(border_contours):
-            for bad_contour in border_contours:
+        if len(border_boxes):
+            for bad_contour in border_boxes:
                 x, y, w, h = bad_contour
                 cv2.rectangle(preproc_image_3ch, (x, y), (x + w, y + h),
                               (0, 0, 255), 2)
@@ -518,16 +548,16 @@ if __name__ == '__main__':
 
         # Adicionar o tempo como overlay no frame
         overlay_text = f"Tempo: {minutes:02}:{seconds:02}"
-        cv2.putText(preproc_image_3ch, overlay_text, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1, (0, 255, 255), 2)
+        #cv2.putText(preproc_image_3ch, overlay_text, (10, 30),
+        #            cv2.FONT_HERSHEY_SIMPLEX,
+        #            1, (0, 255, 255), 2)
 
         combined_view = cv2.hconcat([preproc_image_3ch, clean_mask_3ch])
         # clean_mask_3ch
 
         # _____________________
         # Separando código para visualizar resultados durante o desenvolvimento
-        
+
         # Debug - visualizar imagem filtrada em escala de cinza
         cv2.imshow("img", preproc_image)
 
@@ -538,10 +568,6 @@ if __name__ == '__main__':
         # Finalizar com tecla 'q'
         if cv2.waitKey(int(1000 / fps)) & 0xFF == ord("q"):
             break
-
-    # Decifrar as causas de erros
-    if system_status == "errorCamera":
-        print('erro na câmera')
 
     # print(frame.shape)
     cv2.waitKey(0)
