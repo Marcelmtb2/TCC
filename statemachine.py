@@ -30,6 +30,8 @@ class ObjectTracking(object):
 
         self.frame_count = 0  # frame counter for showing debugging images
 
+
+
         # Initialize the state machine, with a pseudo-state. Transitions
         # are added later
         # Convention will be states starting with capital letter, and
@@ -69,7 +71,8 @@ class ObjectTracking(object):
         # that may extract the object from the workplace. If detected,
         # transition to state Detect_object
         self.machine.add_transition(trigger='trigger_extraction_movement',
-                                    source='Workplace_blocked',
+                                    source=['Workplace_blocked',
+                                            'Detect_object'],
                                     dest='Detect_object')
 
         # At Detect_object state, verify if there is any contour detected in
@@ -86,14 +89,16 @@ class ObjectTracking(object):
         self.machine.add_transition(trigger='trigger_movement_detected',
                                     source=['Monitoring',
                                             'Object_position',
-                                            'Validation_time'],
+                                            'Validation_time',
+                                            'Tracking_objects'],
                                     dest='Tracking_objects')
 
         # At the Tracking_objects state, it will analyze if the movement in
         # scene stops, if there is an object contour identified
         # and its bounding box has no intersection with image border region
         self.machine.add_transition(trigger='trigger_object_stopped',
-                                    source='Tracking_objects',
+                                    source=['Tracking_objects',
+                                            'Object_position'],
                                     dest='Object_position')
 
         # At the Object_position state, any object detected near the image
@@ -146,11 +151,12 @@ class ObjectTracking(object):
         self.machine.add_transition(trigger='trigger_terminate',
                                     source='*',
                                     dest='Stop')
-
+    # =================================================
+    # State callbacks
+    # =================================================
     # defining callbacks for functions as the state machine enters each state
-    def on_enter_Configuration(self):
-        print("We've just entered state Configuration!")
 
+    def on_enter_Configuration(self):
         # Inicializar captura de imagens para subtração de background
         self.cap, self.subtractor_bg = bgsub.initialize_bg_sub(self.device)
 
@@ -159,8 +165,7 @@ class ObjectTracking(object):
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
 
         # O estado Configurar detecta se há objeto no espaço de trabalho
-        # antes de iniciar o monitoramento
-
+        # antes de iniciar o monitoramento. Capturar o primeiro frame.
         ret, frame = self.cap.read()
         if not ret:
             print('Câmera não enviou imagens. Conferir o equipamento.')
@@ -182,6 +187,7 @@ class ObjectTracking(object):
 
     def on_enter_Workplace_blocked(self):
         # O video stream começou com objeto no espaço de trabalho
+        # Ou houve Timeout nos estados Object position ou Object extraction
         # Buscar se há movimento no vídeo para remover o objeto
         # lembrar que o learning rate nesta etapa precisa ser
         # configurado em 0.1, para esquecer rapidamente a sombra
@@ -211,7 +217,6 @@ class ObjectTracking(object):
                 # coisa no pytransitions faça sair deste estado
                 workplace_activity = False
                 self.nxt_transition = 'trigger_object_blocking'
-        print('test')
 
     def on_enter_Detect_object(self):
         # A transição para cá ocorre apenas se foi detectado movimento. Agora
@@ -233,8 +238,11 @@ class ObjectTracking(object):
              border_boxes,
              final_object_box) = bgsub.locate_object(frame, learning_rate)
 
+            # Aguarda acabar a movimentação na imagem, ou por não existir
+            # mais o objeto na cena, ou por acontecer o erro de Timeout
             if not valid_boxes or not border_boxes:
-                # espaço de trabalho sem movimento, verificar se há objeto
+                # espaço de trabalho sem movimento (pixel na foreground mask),
+                # verificar se há objeto pelo contorno na imagem
                 preproc_img = bgsub.preprocess_image(frame)
                 self.blocking_object = bgsub.is_object_at_image(preproc_img)[0]
 
@@ -244,16 +252,22 @@ class ObjectTracking(object):
                     workplace_activity = False
                     self.nxt_transition = 'trigger_object_blocking'
                 else:
+                    # Não há contorno de objeto. Seguir para o estado
+                    # Configuration
                     workplace_activity = False
                     self.nxt_transition = 'trigger_workplace_free'
 
-                self.nxt_transition = 'trigger_extraction_movement'
             else:
                 # Há movimentação no espaço de trabalho, não vai sair do loop
                 # manter transição como trigger_extraction_movement caso alguma
                 # coisa no pytransitions faça sair deste estado
                 workplace_activity = True
                 self.nxt_transition = 'trigger_extraction_movement'
+
+    # Note: the same frame detected in Monitoring state must be used up to the
+    # state Object_extraction?Não precisa, pois o mesmo objeto do subtrator de
+    # background é usado em todos os estados, e esse objeto mantém o histórico
+    # de frames para calcular as diferenças entre pixels
 
     def on_enter_Monitoring(self):
         # workplace sem objeto. Aguardar até que haja movimento
@@ -265,14 +279,10 @@ class ObjectTracking(object):
                 # criar alguma maneira de lidar com esse tipo de erro
                 break
 
-            learning_rate = 0.0001  # sem objeto presente na imagem, setando
-            # o learningRate para valor muito baixo, menor que 0.01, para que
-            # os pixels alterados pela presença do novo objeto persistam por
-            # alguns segundos.
             # Usar parênteses no desempacotamento não cria tupla!
             (valid_boxes,
              border_boxes,
-             final_object_box) = bgsub.locate_object(frame, learning_rate)
+             _) = bgsub.locate_object(frame)
 
             if valid_boxes or border_boxes:
                 # workplace tem movimento, transição para Tracking_objects
@@ -283,17 +293,16 @@ class ObjectTracking(object):
                 # manter próxima transição como object blocking caso alguma
                 # coisa no pytransitions faça sair deste estado
                 workplace_activity = False
-                self.nxt_transition = 'trigger_object_blocking'
-        print('TEST')
+                self.nxt_transition = 'trigger_workplace_ready'
 
     def on_enter_Tracking_objects(self):
-        # Rastrear objetos se movimentando até acabar o movimento na cena.
+        # Rastrear se acabou o movimento na cena.
         # Buscar se há algum contorno de objeto. Se houver, segue para
-        # estado Object_position. Se não, retorna para estado Monitoring
+        # estado Object_position. Se não, retorna para estado Monitoring.
+        # Não diferencia entre objetos nas bordas ou no centro dos frames.
         workplace_activity = True
-        last_valid_boxes = []
-        last_border_boxes = []
-        last_final_object_box = []
+        last_all_boxes = []
+        # last_final_object_box = []
         first_frame = True
         while workplace_activity is True:
             ret, frame = self.cap.read()
@@ -302,36 +311,63 @@ class ObjectTracking(object):
                 # criar alguma maneira de lidar com esse tipo de erro
                 break
 
-            learning_rate = 0.0001  # objeto presente na imagem, setando
-            # o learningRate para valor muito baixo, menor que 0.01, para que
-            # os pixels alterados pela presença do novo objeto persistam por
-            # alguns segundos.
-            # Usar parênteses no desempacotamento não cria tupla!
             (valid_boxes,
              border_boxes,
-             final_object_box) = bgsub.locate_object(frame, learning_rate)
-            
+             _) = bgsub.locate_object(frame)  # learning rate default (0.0001)
+
+            # Acontece movimento e rastreia se o movimento encerra. em
+            # seguida verificar se cessou o movimento buscando contorno
+
+            # se for a primeira execução da busca por movimento
             if first_frame is True:
-                last_valid_boxes = valid_boxes[:]
-                last_border_boxes = border_boxes[:]
-                last_border_boxes = final_object_box[:]
-
-            elif 
-
-
-            if valid_boxes or border_boxes:
-                # workplace tem objeto recentemente em movimento. Comparar
-                # com as boxes encontradas no ciclo anterior. Se houver
-                # diferença significativa (diferença maior que a esperada
-                # por ruído de imagem), considerar cena em movimento
-                workplace_activity = True
+                last_all_boxes = valid_boxes + border_boxes
+                first_frame = False  # never ever back here again...
+                # Cannot leave this state yet. It does not mean the
+                # state is left then reentered again...
 
             else:
-                # Sem movimentação no espaço de trabalho, não vai sair do loop
-                # manter próxima transição como object blocking caso alguma
-                # coisa no pytransitions faça sair deste estado
-                workplace_activity = False
-                self.nxt_transition = 'trigger_object_blocking'
+                # Juntar todos os boxes encontrados para facilitar a comparação
+                # entre máscaras, concatenando as listas
+                union_boxes = valid_boxes + border_boxes
+
+                intersect = cv2.bitwise_and(last_all_boxes, union_boxes)
+                iou = cv2.countNonZero(intersect)/cv2.countNonZero(union_boxes)
+
+                if iou > 0.9:  # Intersection over Union
+                    # Mais de 90% de sobreposição entre os boxes para margem
+                    # à ruido de imagem nas máscaras de foreground de 10% de
+                    # variações de pixels da máscara.
+                    print("Objeto parado ou sem objeto")
+
+                    # Julgar se há objeto no workplace ao buscar por contornos
+                    # de objetos no frame.
+                    self.blocking_object = bgsub.is_object_at_image(frame)[0]
+
+                    if self.blocking_object is True:
+                        # Há objeto no workplace, depois de cessar movimento
+                        # Seguir para estado Object_position
+                        self.nxt_transition = 'trigger_object_stopped'
+                        workplace_activity = False
+                    else:
+                        # Não há objeto no workplace, voltar para Monitoring
+                        self.nxt_transition = 'trigger_movement_detected'
+                        workplace_activity = False
+                else:
+                    print('objeto movimentando')
+                    workplace_activity = True
+                    # Não precisa mudar a transição, continuar
+
+    def on_enter_Object_position(self):
+        pass
+
+    def on_enter_Validation_time(self):
+        pass
+
+    def on_enter_Take_image(self):
+        pass
+
+    def on_enter_Object_extraction(self):
+        pass
 
     def start_object_tracking(self):
         # Esta função vai ciclar os estados. Cada entrada de estado dispara
@@ -341,6 +377,7 @@ class ObjectTracking(object):
 
         while self.terminate_flag is not True:
             print(f'{self.state}')
+            # How to listen any event that may trigger the terminate flag?
             self.trigger(self.nxt_transition)
 
 

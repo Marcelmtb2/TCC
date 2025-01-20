@@ -82,10 +82,10 @@ def is_object_at_image(image, show_overlay=False):
                 x, y, w, h = cv2.boundingRect(contour)
 
                 # Problema: Se houver sombra nítida, será confundido com
-                # um objeto. Usar "margem de histerese" ao definir os thresholds
+                # um objeto. Usar "margem de histerese" ao definir thresholds
                 # das máscaras de objetos claros e objetos escuros
-                if w >= 0.9 * width_img_gray:  # se um contorno de sombra atravessa
-                    # a imagem de um lado a outro
+                if w >= 0.9 * width_img_gray:  # se um contorno de sombra
+                    #  atravessa a imagem de um lado a outro
                     return [False, contours]
                 cv2.rectangle(output_image, (x, y), (x + w, y + h),
                               (0, 0, 255), 2)
@@ -121,8 +121,8 @@ def preprocess_image(image, show_overlay=False):
     # Filtrando o ruído de digitalização da câmera
     f_bilateral = cv2.bilateralFilter(reduced, d=9, sigmaColor=75,
                                       sigmaSpace=125)
-    
-    f_bilateral = cv2.GaussianBlur()
+    # fazer imagens do gaussian blur, do medianfilter e bilateral filter
+    # f_bilateral = cv2.GaussianBlur()
 
     # Conversão para tons de cinza
     gray_frame = cv2.cvtColor(f_bilateral, cv2.COLOR_BGR2GRAY)
@@ -161,7 +161,7 @@ def identify_contours(object_found_binary_mask):
     # Retorna True ou False para objeto detectado ou não
 
     # Detecção de contornos na máscara calculada
-    mask_height, mask_width = object_found_binary_mask.shape  # Dimensões da imagem
+    mask_height, mask_width = object_found_binary_mask.shape
     size_border_factor = 0.01  # Distância mínima das bordas de 10 pixels
     margin_top_bot = int(mask_height * size_border_factor)
     margin_left_right = int(mask_width * size_border_factor)
@@ -184,7 +184,8 @@ def identify_contours(object_found_binary_mask):
         bot_left_away_border = ((x > margin_left_right) and
                                 ((y + h) < (mask_height - margin_top_bot)))
 
-        bot_right_away_border = (((x + w) < (mask_width - margin_left_right)) and
+        bot_right_away_border = (((x + w) < (mask_width - margin_left_right))
+                                 and
                                  ((y + h) < (mask_height - margin_top_bot)))
 
         image_away_borders = (top_left_away_border and
@@ -298,12 +299,6 @@ def locate_object(image, learning_rate=0.0001):
      final_object_box) = identify_contours(clean_mask)
 
     return valid_boxes, border_boxes, final_object_box
-
-
-def check_capture_conditions():
-    # tem que usar vários frames para fazer essa verificação
-    # Usar a máquina de estados para isso
-    pass
 
 
 def send_capture():
