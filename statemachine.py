@@ -12,7 +12,7 @@ class ObjectTracking(object):
               'Tracking_objects', 'Object_position',
               'Validation_time', 'Take_image',
               'Object_extraction', 'Stop']
-
+# al´m de retornar imagem, retornar status de objeto no workspace
     def __init__(self, device=0, show_debug=False):
 
         self.device = device  # As default, look for a installed camera at PC
@@ -24,16 +24,19 @@ class ObjectTracking(object):
         self.terminate_flag = False  # flag for terminate the execution of this
         # state machine
 
+        self.output_image = None  # current image selected by the state machine
+
+        self.previous_output_image = None  # backup image selected by the state machine
+
+        self.image_available_flag = False  # flag for image available
+
         self.workspace_blocked = False  # flag for workspace blocked
 
-        self.show_debug = show_debug  # flag to turn on all debugging images
+        self.show_debug = show_debug  # flag to turn on all debugging figures
 
         self.frame_count = 0  # frame counter for showing debugging images
 
-
-
-        # Initialize the state machine, with a pseudo-state. Transitions
-        # are added later
+        # Initialize the state machine, with a pseudo-state. 
         # Convention will be states starting with capital letter, and
         # transitions will have trigger_ prefix
         self.machine = Machine(model=self, states=ObjectTracking.states,
@@ -54,6 +57,7 @@ class ObjectTracking(object):
         self.machine.add_transition(trigger='trigger_workplace_ready',
                                     source=['Configuration',
                                             'Monitoring',
+                                            'Tracking_objects',
                                             'Object_extraction'],
                                     dest='Monitoring')
 
@@ -300,11 +304,11 @@ class ObjectTracking(object):
         # Buscar se há algum contorno de objeto. Se houver, segue para
         # estado Object_position. Se não, retorna para estado Monitoring.
         # Não diferencia entre objetos nas bordas ou no centro dos frames.
-        workplace_activity = True
-        last_all_boxes = []
-        # last_final_object_box = []
+        workplace_has_activity = True
         first_frame = True
-        while workplace_activity is True:
+        # must have a minimum loop for compare at least two frames and
+        # assert if the object found is still in the scene.
+        while workplace_has_activity is True:
             ret, frame = self.cap.read()
             if not ret:
                 print('Câmera não enviou imagens. Conferir o equipamento.')
@@ -312,74 +316,290 @@ class ObjectTracking(object):
                 break
 
             (valid_boxes,
-             border_boxes,
-             _) = bgsub.locate_object(frame)  # learning rate default (0.0001)
+             border_boxes, _) = bgsub.locate_object(frame)
+            # default learning rate  (0.0001)
 
             # Acontece movimento e rastreia se o movimento encerra. em
             # seguida verificar se cessou o movimento buscando contorno
 
             # se for a primeira execução da busca por movimento
             if first_frame is True:
-                last_all_boxes = valid_boxes + border_boxes
+                past_all_boxes = valid_boxes + border_boxes
                 first_frame = False  # never ever back here again...
                 # Cannot leave this state yet. It does not mean the
                 # state is left then reentered again...
 
             else:
                 # Juntar todos os boxes encontrados para facilitar a comparação
-                # entre máscaras, concatenando as listas
+                # entre máscaras, concatenando as listas.
+                # Se espera que union_boxes nunca seja vazia neste ponto do
+                # código, porque está testando o recente fim de um movimento
+                # detectado pelo Subtrator de Background.
                 union_boxes = valid_boxes + border_boxes
-
-                intersect = cv2.bitwise_and(last_all_boxes, union_boxes)
-                iou = cv2.countNonZero(intersect)/cv2.countNonZero(union_boxes)
+                intersect = cv2.bitwise_and(past_all_boxes, union_boxes)
+                iou = (cv2.countNonZero(intersect) /
+                       cv2.countNonZero(union_boxes))
 
                 if iou > 0.9:  # Intersection over Union
-                    # Mais de 90% de sobreposição entre os boxes para margem
-                    # à ruido de imagem nas máscaras de foreground de 10% de
-                    # variações de pixels da máscara.
-                    print("Objeto parado ou sem objeto")
+                    #  90% de sobreposição entre os boxes para dar margem
+                    # à ruido nas máscaras de foreground
+                    print("Objeto parado ou não há objeto")
 
-                    # Julgar se há objeto no workplace ao buscar por contornos
-                    # de objetos no frame.
-                    self.blocking_object = bgsub.is_object_at_image(frame)[0]
-
-                    if self.blocking_object is True:
-                        # Há objeto no workplace, depois de cessar movimento
-                        # Seguir para estado Object_position
+                    # Confirmar se há objeto no workplace ao buscar por
+                    # contornos de objetos no frame.
+                    # Pré-processar a imagem.
+                    preproc = bgsub.preprocess_image(frame)
+                    object_ok = bgsub.is_object_at_image(preproc)[0]
+                    if object_ok is True:
+                        # Há objeto no workplace, sem movimentos
                         self.nxt_transition = 'trigger_object_stopped'
-                        workplace_activity = False
+                        self.blocking_object = True
+                        workplace_has_activity = False
                     else:
                         # Não há objeto no workplace, voltar para Monitoring
-                        self.nxt_transition = 'trigger_movement_detected'
-                        workplace_activity = False
+                        self.nxt_transition = 'trigger_workplace_ready'
+                        workplace_has_activity = False
+                        self.blocking_object = False
+
                 else:
-                    print('objeto movimentando')
-                    workplace_activity = True
-                    # Não precisa mudar a transição, continuar
+                    print('Movimento detectado')
+                    workplace_has_activity = True
+                    self.nxt_transition = 'trigger_movement_detected'
 
     def on_enter_Object_position(self):
-        pass
+        # Evaluates if the object is centered and away from the image margins
+        # If the object is not centered, it will wait for movement activity
+        # to transition back to the Tracking_objects state. If it takes too
+        # long, and the object persists in the scene and is considered as
+        # background by the MOG2 algorithm, and a Timeout event occurs
+        # In this case, the transition will be to the Workplace_blocked state.
+        # Finally, if the object is centered, it will trigger the transition
+        # to the Validation_time state.
+        workplace_move_activity = False
+        first_frame = True
+
+        while workplace_move_activity is not True:
+            ret, frame = self.cap.read()
+            if not ret:
+                print('Câmera não enviou imagens. Conferir o equipamento.')
+                # criar alguma maneira de lidar com esse tipo de erro
+                break
+
+            (valid_boxes,
+             border_boxes, _) = bgsub.locate_object(frame)
+            # default learning rate (0.0001)
+            if first_frame is True:
+                past_all_boxes = valid_boxes + border_boxes
+                first_frame = False  # never ever back here again...
+
+            if valid_boxes and not border_boxes:  # Trigger transition to
+                # Validation_time? Confirm if the object is centered by
+                # finding contours in frame, and not touching margins.
+                # Avoids timeout gradual fading contours situation.
+                preproc = bgsub.preprocess_image(frame)
+                object_ok, contours = bgsub.is_object_at_image(preproc)
+
+                # Find in image for contours of objects
+                mask_height, mask_width = frame.shape
+                size_border_factor = 0.01  # Bordas de 10 pixels (1%)
+                margin_top_bot = int(mask_height * size_border_factor)
+                margin_left_right = int(mask_width * size_border_factor)
+                # fazer essa borda como percentual, 1% da dimensão H ou W
+
+                for contour in contours:
+                    x, y, w, h = cv2.boundingRect(contour)
+                    # Verificar se algum contorno está nas bordas da imagem
+                    top_left = ((x > margin_left_right) and
+                                (y > margin_top_bot))
+
+                    top_right = (((x + w) < (mask_width - margin_left_right))
+                                 and (y > margin_top_bot))
+
+                    bot_left = ((x > margin_left_right) and
+                                ((y + h) < (mask_height - margin_top_bot)))
+
+                    bot_right = (((x + w) < (mask_width - margin_left_right))
+                                 and
+                                 ((y + h) < (mask_height - margin_top_bot)))
+
+                    image_outside_borders = (top_left and top_right and
+                                             bot_left and bot_right)
+                    # False if any corner inside borders
+
+                    if image_outside_borders is True:
+                        # all found contours are valid ones
+                        # no timeout event trigger this branch
+                        self.nxt_transition = 'trigger_object_centered'
+                        workplace_move_activity = True
+                    else:
+                        # any found countours is border one
+                        # timeout event trigger this branch.
+                        # When timeout occurs, the object mask fades away
+                        # gradually, and the border contours may disappear
+                        # before the valid ones.
+                        self.nxt_transition = 'trigger_timeout'
+                        workplace_move_activity = True
+                        break
+
+            elif not valid_boxes and not border_boxes:  # there was an object
+                # Reaches here only if Timeout. There is another state to
+                # track movement (else clause), to avoid reaching here if
+                # the object is repositioned.
+
+                self.nxt_transition = 'trigger_timeout'
+
+            else:  # border_boxes found, considered as movement for removing
+                # object from workplace. May have valid_boxes too, but they are
+                # not considered in this state. The object is not centered yet.
+                # It will be hard to differentiate any part of object inside
+                # image margins from moving objects. This is simplified as
+                # considering the presence of any border_boxes as movement.
+                self.nxt_transition = 'trigger_movement_detected'
+                workplace_move_activity = True
 
     def on_enter_Validation_time(self):
-        pass
+        # Wait for 0.5 seconds to validate that the object is centered
+        frames_to_wait = int(self.fps / 2)  # FPS times 0.5 seconds
+
+        while frames_to_wait > 0:
+            ret, frame = self.cap.read()
+            if not ret:
+                print('Câmera não enviou imagens. Conferir o equipamento.')
+                # criar alguma maneira de lidar com esse tipo de erro
+                break
+
+            frames_to_wait -= 1
+            (_, border_boxes, _) = bgsub.locate_object(frame)
+
+            if border_boxes:
+                # Movement detected, return to Tracking_objects state
+                self.nxt_transition = 'trigger_movement_detected'
+                break
+            # os contornos nesta etapa são os válidos apenas. Se qualquer
+            # border_box for detectado, a transição será para o estado
+            # Tracking_objects. Senão, a transição será para Take_image.
+        # Validation time is over, object is centered and immobile and no
+        # occlusion is detected. Transition to Take_image state
+        self.nxt_transition = 'trigger_stabilization_time'
+        self.output_image = frame
 
     def on_enter_Take_image(self):
-        pass
+        # Capturar a imagem do objeto e enviar para o servidor central
+        ret, frame = self.cap.read()
+        if not ret:
+            print('Câmera não enviou imagens. Conferir o equipamento.')
+        else:
+            self.output_image = frame
+            self.image_available_flag = True
+            self.nxt_transition = 'trigger_image_sent'
+
 
     def on_enter_Object_extraction(self):
-        pass
+        # Aguardar a retirada do objeto do espaço de trabalho. Se o objeto
+        # for retirado, transição para Monitoring. Se o objeto não for retirado
+        # após um longo tempo, o algoritmo de Subtração de Background começa
+        # a integrar o objeto como imagem de background. Neste caso, após a
+        # retirada do objeto, permanece uma "sombra" na máscara de foreground
+        # na última localização do objeto. Para corrigir este erro, é melhor
+        # reutilizar o estado Workplace_blocked que já resolve um problema
+        # semelhante.
 
-    def start_object_tracking(self):
+        workplace_move_activity = False
+        first_frame = True
+
+        while workplace_move_activity is not True:
+            ret, frame = self.cap.read()
+            if not ret:
+                print('Câmera não enviou imagens. Conferir o equipamento.')
+                # criar alguma maneira de lidar com esse tipo de erro
+                break
+
+            (valid_boxes,
+             border_boxes, _) = bgsub.locate_object(frame)
+            # default learning rate (0.0001)
+            if first_frame is True:
+                past_all_boxes = valid_boxes + border_boxes
+                first_frame = False  # never ever back here again...
+
+            if valid_boxes and not border_boxes:  # Trigger transition to
+                # Validation_time? Confirm if the object is centered by
+                # finding contours in frame, and not touching margins.
+                # Avoids timeout gradual fading contours situation.
+                preproc = bgsub.preprocess_image(frame)
+                object_ok, contours = bgsub.is_object_at_image(preproc)
+
+                # Find in image for contours of objects
+                mask_height, mask_width = frame.shape
+                size_border_factor = 0.01  # Bordas de 10 pixels (1%)
+                margin_top_bot = int(mask_height * size_border_factor)
+                margin_left_right = int(mask_width * size_border_factor)
+                # fazer essa borda como percentual, 1% da dimensão H ou W
+
+                for contour in contours:
+                    x, y, w, h = cv2.boundingRect(contour)
+                    # Verificar se algum contorno está nas bordas da imagem
+                    top_left = ((x > margin_left_right) and
+                                (y > margin_top_bot))
+
+                    top_right = (((x + w) < (mask_width - margin_left_right))
+                                 and (y > margin_top_bot))
+
+                    bot_left = ((x > margin_left_right) and
+                                ((y + h) < (mask_height - margin_top_bot)))
+
+                    bot_right = (((x + w) < (mask_width - margin_left_right))
+                                 and
+                                 ((y + h) < (mask_height - margin_top_bot)))
+
+                    image_outside_borders = (top_left and top_right and
+                                             bot_left and bot_right)
+                    # False if any corner inside borders
+
+                    if image_outside_borders is True:
+                        # all found contours are valid ones
+                        # no timeout event trigger this branch
+                        self.nxt_transition = 'trigger_object_centered'
+                        workplace_move_activity = True
+                    else:
+                        # any found countours is border one
+                        # timeout event trigger this branch.
+                        # When timeout occurs, the object mask fades away
+                        # gradually, and the border contours may disappear
+                        # before the valid ones.
+                        self.nxt_transition = 'trigger_timeout'
+                        workplace_move_activity = True
+                        break
+
+    def start_object_tracking(self, terminate=False, interrogate):
         # Esta função vai ciclar os estados. Cada entrada de estado dispara
         # um callback on_enter_<<estado>> assim que termina a transição.
         # Usar método .trigger('proximo_estado'), em que o próximo estado é
         # definido dinamicamente
-
+        #Saídas são flag de imagem capturada e imagem selecionada.
+        # se imagem indisponível, flag falsa
+        # se imagem disponível, flag verdadeira e imagem disponível
+        # se imagem lida, zerar flag de imagem capturada
         while self.terminate_flag is not True:
             print(f'{self.state}')
             # How to listen any event that may trigger the terminate flag?
             self.trigger(self.nxt_transition)
 
+    def get_image(self):
+        # Retorna a imagem capturada, se houver
+        if self.image_available_flag:
+            # Zerar flag de imagem capturada
+            self.image_available_flag = False
+
+            # Armazena imagem de saída
+            output = self.output_image
+            # Armazena backup da imagem
+            self.previous_output_image = self.output_image.copy()
+
+
+            return output
+        else:
+            # Nenhuma imagem disponível
+            return None
 
 if __name__ == "__main__":
     # Vídeos originais gravados em 4k. Reduzir resolução para a cópia usada
