@@ -4,8 +4,7 @@ This project implements an object tracking and detection system using background
 
 ## Project Structure
 
-- **BackgroundSubtract
-- ion.py**: Contains functions for initializing the background subtractor, preprocessing images, detecting objects, and identifying contours.
+- **BackgroundSubtraction.py**: Contains functions for initializing the background subtractor, preprocessing images, detecting objects, and identifying contours.
 - **statemachine.py**: Implements a state machine for object tracking using the `transitions` library. It defines various states and transitions for tracking objects in the video stream.
 
 ## BackgroundSubtraction.py
@@ -58,12 +57,15 @@ This module implements a state machine for object tracking using background subt
 ## Usage
 
 1. Clone the repository.
-2. Ensure you have the required dependencies installed (`cv2`, `numpy`, `transitions`).
+2. Ensure you have Miniconda installed. Create and activate the environment using the `environment.yml` file:
+   ```bash
+   conda env create -f environment.yml
+   conda activate cme
+   ```
 3. Run the `statemachine.py` script to start the object tracking state machine.
-
-```bash
-python statemachine.py
-```
+   ```bash
+   python statemachine.py
+   ```
 
 ## License
 
