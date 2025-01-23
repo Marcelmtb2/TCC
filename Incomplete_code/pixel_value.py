@@ -90,7 +90,8 @@ if __name__ == '__main__':
         cropright = 0.77  # cortar ponta do suporte. 0.78125 original
 
         if (height/width) < ratio3x4:
-            image = frame[0:height, int(cropleft * width): int(cropright * width)]
+            image = frame[0:height,
+                          int(cropleft * width): int(cropright * width)]
         else:
             image = frame  # Não cropar se a resolução não for 9x16
 
