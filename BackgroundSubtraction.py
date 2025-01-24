@@ -168,7 +168,7 @@ def preprocess_image(image, show_overlay=False):
     return gray_frame
 
 
-def find_foreground_object(image, learning_rate=0.0001):
+def find_foreground_object(fgbgMOG2, image, learning_rate=0.0001):
     """
     Identify objects moving relative to the background.
 
@@ -255,7 +255,7 @@ def identify_contours(object_found_binary_mask):
         else:
             border_contours.append((x, y, w, h))
 
-    # Create a list of bounding boxes if there are contours
+    # Create a bigger box around bounding boxes if there are valid contours
     if len(valid_contours):
         # Group nearby bounding boxes
         x_min = min([x for (x, y, w_box, h_box) in valid_contours])
@@ -269,7 +269,7 @@ def identify_contours(object_found_binary_mask):
     return valid_contours, border_contours, final_object_box
 
 
-def locate_object(image, learning_rate=0.0001):
+def locate_object(fgbgMOG2, image, learning_rate=0.0001):
     """
     Locate the object in the preprocessed image.
 
@@ -284,7 +284,7 @@ def locate_object(image, learning_rate=0.0001):
     # Receives preprocessed image, returns mask and bounding box of the object
     preproc_image = preprocess_image(image)
 
-    clean_mask = find_foreground_object(preproc_image, learning_rate)
+    clean_mask = find_foreground_object(fgbgMOG2, preproc_image, learning_rate)
 
     (valid_boxes,
      border_boxes,
@@ -389,7 +389,8 @@ if __name__ == "__main__":
         # If it returns False, keep the learning rate low to
         # increase the persistence of the object in the calculated mask
 
-        clean_mask = find_foreground_object(preproc_image, learning_rate)
+        clean_mask = find_foreground_object(fgbgMOG2, preproc_image,
+                                            learning_rate)
 
         temp_a, temp_b, temp_c = identify_contours(clean_mask)
 
@@ -408,6 +409,7 @@ if __name__ == "__main__":
                           thickness=cv2.FILLED)
             # cv2.imshow("maskMOG2", mask_MOG2)
             mask_object = np.zeros_like(clean_mask)
+            # using [1] to get the contours
             instant_contours = is_object_at_image(preproc_image)[1]
             # Receives the contours output
             if instant_contours:  # There may be a case where

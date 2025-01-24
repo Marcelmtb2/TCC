@@ -1,6 +1,12 @@
 # state machine
+
+# Adicionar CLI
+# Checar estado DETECT OBJECT, para encontrar a máscara do MOG2 toda limpa
+# TErminar estado OBJECT EXtraction, pra sair quando nao houver objeto ou
+# se houver timeout!
 from transitions import Machine
 import cv2
+import numpy as np
 import BackgroundSubtraction as bgsub
 
 
@@ -237,6 +243,8 @@ class ObjectTracking(object):
         ret, frame = self.cap.read()
         if not ret:
             print("Camera did not send images. Check the equipment.")
+            # Keep locked at Stop state
+            self.nxt_transition = "trigger_terminate"
 
         # Preprocess the image by filtering noise and resizing.
         preproc_image = bgsub.preprocess_image(frame)
@@ -245,13 +253,19 @@ class ObjectTracking(object):
         # output[0] = True/False
         self.blocking_object = bgsub.is_object_at_image(preproc_image,
                                                         self.show_debug)[0]
-
+        # resized = cv2.resize(frame, (640, 480))
+        # cv2.imshow("First frame", resized)
         # Determine if the workspace is free or not and trigger the
         # appropriate transition
         if self.blocking_object:
             self.nxt_transition = "trigger_object_blocking"
+            print("Object detected in the workspace")
+            cv2.destroyAllWindows()
         else:
             self.nxt_transition = "trigger_workplace_ready"
+            print("Workspace is free")
+            # cv2.waitKey(0)
+            # cv2.destroyAllWindows()
 
     def on_enter_Workplace_blocked(self):
         """
@@ -269,6 +283,8 @@ class ObjectTracking(object):
             if not ret:
                 print("Camera did not send images. Check the equipment.")
                 # Create a way to handle this type of error
+                # Keep locked at Stop state
+                self.nxt_transition = "trigger_terminate"
                 break
 
             learning_rate = 0.1  # There is an object present in the image,
@@ -276,7 +292,8 @@ class ObjectTracking(object):
             # Using parentheses in unpacking does not create a tuple!
             (valid_boxes,
              border_boxes,
-             final_object_box) = bgsub.locate_object(frame, learning_rate)
+             final_object_box) = bgsub.locate_object(self.subtractor_bg, frame,
+                                                     learning_rate)
 
             if valid_boxes or border_boxes:
                 # The workplace has movement, transition to Detect_object
@@ -311,7 +328,8 @@ class ObjectTracking(object):
             # Using parentheses in unpacking does not create a tuple!
             (valid_boxes,
              border_boxes,
-             final_object_box) = bgsub.locate_object(frame, learning_rate)
+             final_object_box) = bgsub.locate_object(self.subtractor_bg,
+                                                     frame, learning_rate)
 
             # Wait for the movement to stop in the image, either because the
             # object is no longer in the scene, or because a Timeout error
@@ -356,15 +374,24 @@ class ObjectTracking(object):
             if not ret:
                 print("Camera did not send images. Check the equipment.")
                 # Create a way to handle this type of error
+                # Keep locked at Stop state
+                self.nxt_transition = "trigger_terminate"
                 break
 
+            # resized = cv2.resize(frame, (640, 480))
+            # cv2.imshow("monitoring", resized)
+
             # Using parentheses in unpacking does not create a tuple!
-            (valid_boxes, border_boxes, _) = bgsub.locate_object(frame)
+            (valid_boxes,
+             border_boxes,
+             _) = bgsub.locate_object(self.subtractor_bg, frame)
 
             if valid_boxes or border_boxes:
                 # The workplace has movement, transition to Tracking_objects
                 workplace_activity = True
                 self.nxt_transition = "trigger_movement_detected"
+                # cv2.waitKey(0)
+                # cv2.destroyAllWindows()
             else:
                 # No movement in the workspace, will not exit the loop
                 # Keep the next transition as object blocking in case something
@@ -378,12 +405,14 @@ class ObjectTracking(object):
         Tracks if movement has stopped and checks for object contours.
         """
         # Track if the movement in the scene has stopped.
-        # Look for any object contours. If there are, proceed to
+        # Look for any object contours. If there is any one, proceed to
         # Object_position state. If not, return to Monitoring state.
         # Does not differentiate between objects at the edges or in the center
         # of the frames.
         workplace_has_activity = True
         first_frame = True
+
+        frame_count_no_change = 0
         # Must have a minimum loop to compare at least two frames and
         # assert if the object found is still in the scene.
         while workplace_has_activity is True:
@@ -391,9 +420,19 @@ class ObjectTracking(object):
             if not ret:
                 print("Camera did not send images. Check the equipment.")
                 # Create a way to handle this type of error
+                # Keep locked at Stop state
+                self.nxt_transition = "trigger_terminate"
                 break
 
-            (valid_boxes, border_boxes, _) = bgsub.locate_object(frame)
+            # resized = cv2.resize(frame, (640, 480))
+            # cv2.imshow("Tracking", resized)
+
+            # test = bgsub.preprocess_image(frame)
+            # cv2.imshow("Tracking", test)
+            # cv2.waitKey(0)
+
+            (valid_boxes,
+             border_boxes, _) = bgsub.locate_object(self.subtractor_bg, frame)
             # Default learning rate (0.0001)
 
             # Movement occurs and tracks if the movement stops. Then
@@ -402,6 +441,8 @@ class ObjectTracking(object):
             # If it is the first execution of the movement search
             if first_frame is True:
                 past_all_boxes = valid_boxes + border_boxes
+
+                last_x, last_y, last_w, last_h = 0, 0, 0, 0
                 first_frame = False  # Never ever back here again...
                 # Cannot leave this state yet. It does not mean the
                 # state is left then reentered again...
@@ -412,37 +453,98 @@ class ObjectTracking(object):
                 # It is expected that union_boxes is never empty at this point
                 # in the code, because it is testing the recent end of a
                 # movement detected by the Background Subtractor.
-                union_boxes = valid_boxes + border_boxes
-                intersect = cv2.bitwise_and(past_all_boxes, union_boxes)
-                iou = (cv2.countNonZero(intersect) /
-                       cv2.countNonZero(union_boxes))
 
-                if iou > 0.9:  # Intersection over Union
-                    # More than 90% overlap between the boxes to allow for
-                    # noise in the foreground masks
-                    print("Object stopped or no object")
+                # Define the size of the mask, as a cropped frame, for the
+                # objects moving in the workplace.
+                mask_MOG2 = np.zeros_like(bgsub.preprocess_image(frame))
 
-                    # Confirm if there is an object in the workplace by
-                    # looking forobject contours in the frame.
-                    # Preprocess the image.
-                    preproc = bgsub.preprocess_image(frame)
-                    object_ok = bgsub.is_object_at_image(preproc)[0]
-                    if object_ok is True:
-                        # There is an object in the workplace, without
-                        # movements
-                        self.nxt_transition = "trigger_object_stopped"
-                        self.blocking_object = True
-                        workplace_has_activity = False
+                # Mask for the objects in the frame. If moving, the blur will
+                # diminish the size of the object comparing to the MOG2 mask.
+                mask_object = np.zeros_like(bgsub.preprocess_image(frame))
+
+                # Find the contours of the objects in the frame, 2nd position
+                # of the return tuple
+                instant_contours = bgsub.is_object_at_image(
+                                        bgsub.preprocess_image(frame)
+                                   )[1]
+
+                # Compare the position of all combined boxes in the scene
+                # from the locate_object() and the mask_object. If the
+                # intersection over union is greater than 0.9, the object
+                # is considered stopped. If not, the object is still moving.
+
+                if instant_contours:
+                    x, y, w, h = cv2.boundingRect(np.vstack(instant_contours))
+                    cv2.rectangle(mask_object, (x, y), (x + w, y + h), 255,
+                                  thickness=cv2.FILLED)
+
+                    for box in past_all_boxes:
+                        cv2.rectangle(mask_MOG2, (box[0], box[1]),
+                                      (box[0] + box[2], box[1] + box[3]),
+                                      255, thickness=cv2.FILLED)
+
+                    intersect = cv2.bitwise_and(mask_MOG2, mask_object)
+                    union = cv2.bitwise_or(mask_MOG2, mask_object)
+
+                    intersection_area = np.sum(intersect > 0)
+                    union_area = np.sum(union > 0)
+                    iou = intersection_area / union_area
+
+                    # mask_MOG2_3ch = cv2.cvtColor(mask_MOG2,
+                    # cv2.COLOR_GRAY2BGR)
+                    # mask_object_3ch = cv2.cvtColor(mask_object,
+                    # cv2.COLOR_GRAY2BGR)
+
+                    # cv2.imshow("MOG2 mask", mask_MOG2_3ch)
+                    # cv2.imshow("Object mask", mask_object_3ch)
+                    #  cv2.waitKey(0)
+
+                    past_all_boxes = valid_boxes + border_boxes
+
+                    if iou > 0.9:  # Intersection over Union
+
+                        # It is needed to count frames, 5 frames without
+                        # modification in the size of the bounding rectangle
+                        # coordinates.
+                        # The pixel count may oscillate due to noise in the
+                        # foreground mask. The object is considered stopped
+                        # if the pixel number of the MOG2 mask is within 95%
+                        # of the total pixel number of the previous rectangle.
+                        if (last_x, last_y, last_w, last_h) == (x, y, w, h):
+                            frame_count_no_change += 1  # Wait for 5 frames
+                        else:
+                            frame_count_no_change = 0  # object is moving
+                            last_x, last_y, last_w, last_h = x, y, w, h
+
+                        if frame_count_no_change >= 5:
+                            # The object is considered stopped
+                            # Evaluate iou is meaningful now
+                            print("Object stopped or no object")
+
+                            # Confirm if there is an object in the workplace by
+                            # looking forobject contours in the frame.
+                            # Preprocess the image.
+                            preproc = bgsub.preprocess_image(frame)
+                            object_ok = bgsub.is_object_at_image(preproc)[0]
+
+                            if object_ok is True:
+                                # There is an object in the workplace, without
+                                # movements. Transition to Object_position
+                                self.nxt_transition = "trigger_object_stopped"
+                                self.blocking_object = True
+                                workplace_has_activity = False
+                            else:
+                                # No object in the workplace, return to
+                                # Monitoring
+                                self.nxt_transition = "trigger_workplace_ready"
+                                workplace_has_activity = False
+                                self.blocking_object = False
+
                     else:
-                        # No object in the workplace, return to Monitoring
-                        self.nxt_transition = "trigger_workplace_ready"
+                        print("Movement detected")
                         workplace_has_activity = False
-                        self.blocking_object = False
-
-                else:
-                    print("Movement detected")
-                    workplace_has_activity = True
-                    self.nxt_transition = "trigger_movement_detected"
+                        self.nxt_transition = "trigger_movement_detected"
+        # cv2.destroyAllWindows()
 
     def on_enter_Object_position(self):
         """
@@ -458,20 +560,24 @@ class ObjectTracking(object):
         # Finally, if the object is centered, it will trigger the transition
         # to the Validation_time state.
         workplace_move_activity = False
-        first_frame = True
+        # first_frame = True
 
         while workplace_move_activity is not True:
             ret, frame = self.cap.read()
             if not ret:
                 print("Camera did not send images. Check the equipment.")
                 # Create a way to handle this type of error
+                # Keep locked at Stop state
+                self.nxt_transition = "trigger_terminate"
                 break
 
-            (valid_boxes, border_boxes, _) = bgsub.locate_object(frame)
+            (valid_boxes,
+             border_boxes,
+             _) = bgsub.locate_object(self.subtractor_bg, frame)
             # Default learning rate (0.0001)
-            if first_frame is True:
-                past_all_boxes = valid_boxes + border_boxes
-                first_frame = False  # Never ever back here again...
+            # if first_frame is True:
+            #     past_all_boxes = valid_boxes + border_boxes
+            #     first_frame = False  # Never ever back here again...
 
             if valid_boxes and not border_boxes:  # Trigger transition to
                 # Validation_time? Confirm if the object is centered by
@@ -481,8 +587,8 @@ class ObjectTracking(object):
                 object_ok, contours = bgsub.is_object_at_image(preproc)
 
                 # Find in image for contours of objects
-                mask_height, mask_width = frame.shape
-                size_border_factor = 0.01  # Borders of 10 pixels (1%)
+                mask_height, mask_width = preproc.shape
+                size_border_factor = 0.01  # Borders of ~10 pixels (1%)
                 margin_top_bot = int(mask_height * size_border_factor)
                 margin_left_right = int(mask_width * size_border_factor)
                 # Make this border as a percentage, 1% of the H or W dimension
@@ -556,10 +662,14 @@ class ObjectTracking(object):
             if not ret:
                 print("Camera did not send images. Check the equipment.")
                 # Create a way to handle this type of error
+                # Keep locked at Stop state
+                self.nxt_transition = "trigger_terminate"
                 break
 
             frames_to_wait -= 1
-            (_, border_boxes, _) = bgsub.locate_object(frame)
+            (_,
+             border_boxes,
+             _) = bgsub.locate_object(self.subtractor_bg, frame)
 
             if border_boxes:
                 # Movement detected, return to Tracking_objects state
@@ -584,10 +694,17 @@ class ObjectTracking(object):
         ret, frame = self.cap.read()
         if not ret:
             print("Camera did not send images. Check the equipment.")
+            # Keep locked at Stop state
+            self.nxt_transition = "trigger_terminate"
         else:
             self.output_image = frame
             self.image_available_flag = True
             self.nxt_transition = "trigger_image_sent"
+            print("Image captured")
+            resized = cv2.resize(frame, (640, 480))
+            cv2.imshow("captured", resized)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
 
     def on_enter_Object_extraction(self):
         """
@@ -604,73 +721,97 @@ class ObjectTracking(object):
         # problem.
 
         workplace_move_activity = False
-        first_frame = True
+        # first_frame = True
+        movement_detected_flag = False
 
         while workplace_move_activity is not True:
             ret, frame = self.cap.read()
             if not ret:
                 print("Camera did not send images. Check the equipment.")
                 # Create a way to handle this type of error
+                # Interrupt the state machine execution with a terminate
+                # transition to the stop state.
+                # Keep locked at Stop state
+                self.nxt_transition = "trigger_terminate"
                 break
 
-            (valid_boxes, border_boxes, _) = bgsub.locate_object(frame)
+            (valid_boxes,
+             border_boxes,
+             _) = bgsub.locate_object(self.subtractor_bg, frame)
             # Default learning rate (0.0001)
-            if first_frame is True:
-                past_all_boxes = valid_boxes + border_boxes
-                first_frame = False  # Never ever back here again...
 
-            if valid_boxes and not border_boxes:  # Trigger transition to
-                # Validation_time? Confirm if the object is centered by
-                # finding contours in the frame, and not touching margins.
+            # It is still possible to have only valid_boxes at this stage.
+            # The time from the object stabilization to the beginning of
+            # this state will be less than the Timeout.
+
+            if border_boxes and (movement_detected_flag is False):
+                # movement detected
+                movement_detected_flag = True
+                last_valid_boxes = valid_boxes
+                # now identify if the
+                # movement ceases and there is no object in the scene.
+                # the object may be repositioned and touch the borders
+                # of the image. The object is not considered as removed
+                # from the workplace yet.
+            else:  # no more movement detected due to lack of activity
+                # at the image borders. Now, the instrument has changed
+                # its position, or it was completely removed from the scene.
+                # it must be compared the current valid_boxes with the
+                # previous ones. If there is any change, consider the object
+                # as repositioned, and trigger the transition to the
+                # Tracking_object state.
+                # If there is no valid_boxes, test the Timeout event, too.
+
+                # Confirm if the object is removed by
+                # not finding contours in the frame.
                 # Avoids timeout gradual fading contours situation.
                 preproc = bgsub.preprocess_image(frame)
                 object_ok, contours = bgsub.is_object_at_image(preproc)
 
-                # Find in image for contours of objects
-                mask_height, mask_width = frame.shape
-                size_border_factor = 0.01  # Borders of 10 pixels (1%)
-                margin_top_bot = int(mask_height * size_border_factor)
-                margin_left_right = int(mask_width * size_border_factor)
-                # Make this border as a percentage, 1% of the H or W dimension
+                # if the movement_detected_flag is False and the object_ok
+                # is true, there is a Timeout situation event. The object
+                # was not removed from the workplace, and the Background
+                # Subtraction algorithm starts to integrate the object as
+                # a background image.
+                if not movement_detected_flag and object_ok:
+                    # Timeout event triggers this branch
+                    self.nxt_transition = "trigger_timeout"
+                    workplace_move_activity = True
 
-                for contour in contours:
-                    x, y, w, h = cv2.boundingRect(contour)
-                    # Check if any contour is at the image borders
-                    top_left = ((x > margin_left_right)
-                                and
-                                (y > margin_top_bot))
-
-                    top_right = (((x + w) < (mask_width - margin_left_right))
-                                 and
-                                 (y > margin_top_bot))
-
-                    bot_left = ((x > margin_left_right)
-                                and
-                                ((y + h) < (mask_height - margin_top_bot)))
-
-                    bot_right = (((x + w) < (mask_width - margin_left_right))
-                                 and
-                                 ((y + h) < (mask_height - margin_top_bot)))
-
-                    image_outside_borders = (
-                        top_left and top_right and bot_left and bot_right
-                    )
-                    # False if any corner inside borders
-
-                    if image_outside_borders is True:
-                        # All found contours are valid ones
-                        # No timeout event triggers this branch
-                        self.nxt_transition = "trigger_object_centered"
-                        workplace_move_activity = True
+                elif object_ok and movement_detected_flag:
+                    # Compare the current valid_boxes with the previous ones
+                    # to check if the object was repositioned.
+                    if last_valid_boxes == valid_boxes:
+                        # Movement did not change the position of the object.
+                        # It won't be considered as a new object in the scene.
+                        # Trigger the transition to the Object_extraction state
+                        # again, to wait for the object to be removed.
+                        workplace_move_activity = False
+                        self.nxt_transition = "trigger_object_blocking"
                     else:
-                        # Any found contours are border ones
-                        # Timeout event triggers this branch.
-                        # When timeout occurs, the object mask fades away
-                        # gradually, and the border contours may disappear
-                        # before the valid ones.
-                        self.nxt_transition = "trigger_timeout"
+                        # The object was repositioned. Trigger the transition
+                        # to the Tracking_objects state.
                         workplace_move_activity = True
-                        break
+                        self.nxt_transition = "trigger_movement_detected"
+                else:
+                    # if object_ok is False and movement_detected_flag is True
+                    # The object was removed from the workplace. Transition to
+                    # Monitoring state.
+                    workplace_move_activity = True
+                    self.nxt_transition = "trigger_workplace_ready"
+
+    def on_enter_Stop(self):
+        """
+        Callback for entering the Stop state.
+        Terminates the state machine.
+        """
+        # Terminate the state machine
+        self.terminate_flag = True  # Flag to terminate the state machine
+        print("State machine terminated")
+        # Free the camera resource
+        self.cap.release()
+        # Keep locked at Stop state
+        self.nxt_transition = "trigger_terminate"
 
     def start_object_tracking(self):
         """
@@ -689,6 +830,37 @@ class ObjectTracking(object):
             print(f"{self.state}")
             # How to listen to any event that may trigger the terminate flag?
             self.trigger(self.nxt_transition)
+            if self.state == "Stop":
+                output = self.get_image()
+
+                if output is not None:
+                    print("Image available")
+                    cv2.imshow("Output image", output)
+                    cv2.waitKey(0)
+                    cv2.destroyAllWindows()
+                else:
+                    print("No image available")
+
+                break
+            elif self.state == "Object_extraction":
+                output = self.get_image()
+
+                if output is not None:
+                    print("Image available. Click the image and press any key \
+to continue")
+                    cv2.imshow("Output image", output)
+                    cv2.waitKey(0)
+                    cv2.destroyAllWindows()
+                else:
+                    print("No image available")
+
+                print("Object extraction state reached and image captured.")
+                print("Analyze the video for an another object detection?")
+                next_round = input('(Y/N):')
+                if next_round.upper() == 'Y':
+                    self.trigger("trigger_image_sent")
+                else:
+                    self.trigger("trigger_terminate")
 
     def get_image(self):
         """
@@ -706,6 +878,8 @@ class ObjectTracking(object):
             output = self.output_image
             # Store a backup of the image
             self.previous_output_image = self.output_image.copy()
+
+            self.output_image = None  # Reset the output image
 
             return output
         else:
@@ -727,51 +901,81 @@ if __name__ == "__main__":
     # Complex video with various adverse conditions
     # cap = cv2.VideoCapture(r"video\video.mp4")
 
-    # Generic objects
-    object1 = "cabo luz off.mp4"
-    object2 = "cabo movimento maos luz on.mp4"
-    object3 = "caixa clara movimento maos luz on.mp4"
-    object4 = "caixa desde inicio luz on.mp4"
-    object5 = "caixa luz off.mp4"
-    object6 = "caixa mudanca iluminacao.mp4"
-    object7 = "Paquimetro luz off.mp4"
-    object8 = "Paquimetro mao presente luz off.mp4"
-    object9 = "Paquimetro para caixa luz off.mp4"
-    object10 = "Regua luz off.mp4"
-    object11 = "regua refletiva luz on.mp4"
-
-    # Mock instrument
-    object12 = "BaixaIluminacao100luxSombraForte.mp4"
-    object13 = "TrocaObjetosAutofocoAtrapalha.mp4"
-    object14 = "Iluminacao800_560lux.mp4"
-    object15 = "Objeto15segs.mp4"
-    object16 = "Objeto15segSubstituido.mp4"
-    object17 = "objeto3segs.mp4"
-    object18 = "ObjetoInicio.mp4"
-    object19 = "ObjetoOrtogonalDiagonal.mp4"
-    object20 = "ObjetoReposicionado.mp4"
-    object21 = "OclusãoMão.mp4"
-    object22 = "OclusãoTempMão.mp4"
+    videosamples = [  # Generic objects
+                    "cabo luz off.mp4",
+                    "caixa clara movimento maos luz on.mp4",
+                    "caixa desde inicio luz on.mp4",
+                    "caixa luz off.mp4",
+                    "caixa mudanca iluminacao.mp4",
+                    "Paquimetro luz off.mp4",
+                    "Paquimetro mao presente luz off.mp4",
+                    "Paquimetro para caixa luz off.mp4",
+                    "Regua luz off.mp4",
+                    "regua refletiva luz on.mp4",
+                    # Mock instrument
+                    "BaixaIluminacao100luxSombraForte.mp4",
+                    "TrocaObjetosAutofocoAtrapalha.mp4",
+                    "Iluminacao800_560lux.mp4",
+                    "Objeto15segs.mp4",
+                    "Objeto15segSubstituido.mp4",
+                    "objeto3segs.mp4",
+                    "ObjetoInicio.mp4",
+                    "ObjetoOrtogonalDiagonal.mp4",
+                    "ObjetoReposicionado.mp4",
+                    "OclusãoMão.mp4",
+                    "OclusãoTempMão.mp4"
+                    ]
 
     # - To generate HSV values of the background
-    object23 = "TemperaturaCor3k_9k.mp4"
+    # object23 = "TemperaturaCor3k_9k.mp4"
 
     # - HSV values of the background
-    object24 = "ContrasteTemperaturaCor3k_9k.mp4"
+    # object24 = "ContrasteTemperaturaCor3k_9k.mp4"
 
     # Select the object video
-    object = object17
+    # object = object17
 
     # Consider in the final version that the device should be a camera
     # Initialize image capture
-    device = folder + object
+    # device = folder + videosamples
     # If using the main camera, comment the previous line and uncomment
     # the following line
     # device = 0
+    user_choosing = True
+    while user_choosing is True:
+        try:
+            # Ask user for a number corresponding to a video and 0 to camera
+            for index, video in enumerate(videosamples, start=1):
+                print(f'Video {index} - {video}')
+            escolha = int(input(f"Choose a number between 1 \
+and {len(videosamples)}. Choose 0 for live camera feed: "))
+
+            # Verifica se o número está dentro do intervalo válido
+            if 1 <= escolha <= len(videosamples):
+                # Obtém o nome do arquivo correspondente
+                arquivo_escolhido = videosamples[escolha - 1]
+                caminho_completo = folder + arquivo_escolhido
+
+                # Exibe o nome do arquivo e o caminho completo
+                print(f"You chose: {arquivo_escolhido}")
+                print(f"Relative path: {caminho_completo}")
+                break
+            else:
+                print("Number outside range. Try again.")
+        except ValueError:
+            print("Invalid input. Please, insert an integer number.")
+
+    device = caminho_completo
 
     supervisor = ObjectTracking(device, True)
 
-    print(supervisor.state)  # To follow what is the current state
+    print('Test program for object detection state machine.')
+
+    print('Press any key to start the state machine.')
+    _ = input()
+    print('State machine started.')
+    print('Current state: ', supervisor.state)
+
     supervisor.start_object_tracking()
     # supervisor.trigger_initialize
     # print(supervisor.state)

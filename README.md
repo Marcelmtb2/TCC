@@ -62,11 +62,29 @@ This module implements a state machine for object tracking using background subt
    conda env create -f environment.yml
    conda activate cme
    ```
-3. Run the `statemachine.py` script to start the object tracking state machine.
+3. There is a private directory on OneDrive with the videos used to test and validate code. Copy the two videos and the directory "videosMock" into a folder named "video" at the same directory level as the python scripts.
+4. Run the `statemachine.py` script to start the object tracking state machine.
    ```bash
    python statemachine.py
    ```
 
-## License
+## CLI Usage
 
-This project is licensed under the MIT License.
+The `statemachine.py` script includes a simple command-line interface (CLI) to select the video source for object tracking. When you run the script, you will be prompted to choose a video file from the list or use the live camera feed.
+
+1. After running the script, you will see a list of available video files.
+2. Enter the number corresponding to the video file you want to use, or enter `0` to use the live camera feed.
+3. The state machine will start and process the selected video or camera feed.
+
+Example:
+```bash
+python statemachine.py
+```
+```
+Video 1 - cabo luz off.mp4
+Video 2 - caixa clara movimento maos luz on.mp4
+...
+Choose a number between 1 and 22. Choose 0 for live camera feed: 1
+You chose: cabo luz off.mp4
+Relative path: video\videosMock\cabo luz off.mp4
+```
