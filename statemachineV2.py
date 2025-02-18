@@ -1,27 +1,29 @@
 # state machine
 
-# Adicionar CLI - Esperado que o backend CME controle a câmera
+# Melhorar Test CLI - Esperado que o backend CME controle a câmera
 # e envie frames para este algoritmo.
 # Checar estado DETECT OBJECT, para encontrar a máscara do MOG2 toda limpa
-# TErminar estado OBJECT EXtraction, pra sair quando nao houver objeto ou
-# se houver timeout!
-from transitions import Machine
+
 import cv2
 import numpy as np
 import BackgroundSubtraction as bgsub
+# from transitions import Machine
+from transitions.extensions import HierarchicalMachine
+from transitions.extensions.nesting import NestedState
 
+NestedState.separator = '►'  # Alt+16 parent►child
 
-class ObjectTracking(object):
+class SurgicalInstrumentTrackDetect(object):
     """
     A state machine for object tracking using background subtraction.
 
     Attributes:
-        device (int or str): The video capture device or file path.
+        # device (int or str): The video capture device or file path.
         subtractor_bg: The background subtractor object.
         nxt_transition (str): The next transition trigger.
         terminate_flag (bool): Flag to terminate the state machine.
         output_image: The current image selected by the state machine.
-        previous_output_image: The backup image selected by the state machine.
+        # previous_output_image: The backup image selected by the state machine.
         image_available_flag (bool): Flag indicating if an image is available.
         workspace_blocked (bool): Flag indicating if the workspace is blocked.
         show_debug (bool): Flag to show debugging images.
@@ -30,31 +32,106 @@ class ObjectTracking(object):
     """
 
     # Defining states, following the image acquisition requirements
-    states = [
-        "Start",
-        "Configuration",
-        "Monitoring",
-        "Detect_object",
-        "Workplace_blocked",
-        "Tracking_objects",
-        "Object_position",
-        "Validation_time",
-        "Take_image",
-        "Object_extraction",
-        "Stop",
+    # using the hierarchical state model
+    states = ['stop', 
+              {'name': 'operational',
+              'initial': 'configuration',
+              'children':[
+                         'configuration',
+                         'error',
+                         'takeImage',
+                         {'name': 'monitoring',
+                          'initial': 'workplaceFree',
+                          'children':[
+                              'workplaceFree',
+                              'tracking',
+                              'centered'
+                          ]
+                         }
+                        ] 
+              }
+             ]
+    
+    # Defining transitions
+    transitions = [
+        # Transitions Hierarchical level 0
+
+        # Unconditional terminate, from any state/substate
+        ['trigger_terminate',
+         'operational', 'stop'],
+
+        # Transitions Hierarchical level 1
+
+        # If any object is in the workplace, transition
+        # to Error state, and reconfigure system
+        ['trigger_workplaceBlocked',
+         'operational►configuration', 'operational►error'],
+
+        # If no contour is detected in the workplace, transition to
+        # configuration state to reset system settings.
+        ['trigger_emptyWorkplace',
+         'operational►error', 'operational►configuration'],
+
+        # When configuration ends, if no object is at the workplace,
+        # transition to Monitoring state
+        ['trigger_workplaceReady',
+         'operational►configuration', 'operational►monitoring'],
+
+        # If an object remains in the workplace after a long time,
+        # the Background Subtraction algorithm integrate it as background.
+        # In this condition, after the object is removed, it remains a 
+        # "shadow" in the image mask at the last location of the object.
+        ['trigger_timeout',
+         'operational►monitoring', 'operational►error'],
+
+        # At the takeImage state, the system captures and make the image
+        # available for transmission to the image recognition Server.
+        ['trigger_imageSent',
+         'operational►takeImage', 'operational►monitoring'],
+
+        # Transitions Hierarchical level 2
+
+        # At the monitoring state, it will capture images, and change to the
+        # state tracking if any object enters the scene, and keeps moving.
+        ['trigger_movement_detected',
+         'operational►monitoring►workplaceFree',
+         'operational►monitoring►tracking'],
+        
+        # At the tracking state, if no object is in the scene, fallback to
+        # the workplaceFree state.
+        ['trigger_noObject',
+         'operational►monitoring►tracking',
+         'operational►monitoring►workplaceFree'],
+
+        # If the object is present, check if it is away from borders and if
+        # it has no movement in the scene at the centered state.
+        ['trigger_objectStopped',
+         'operational►monitoring►tracking',
+         'operational►monitoring►centered'],
+
+        # If the object is reaching the margin region near the image borders,
+        # it is not considered at rest, going back to the tracking state.
+        ['trigger_readjustPosition',
+         'operational►monitoring►centered',
+         'operational►monitoring►tracking'],
+
+        # The object is centered and immobile, so take the current frame and
+        # make it available to the image recognition service.
+        ['trigger_imageOk',
+         'operational►monitoring►centered',
+         'operational►takeImage'],
     ]
 
-    def __init__(self, device=0, show_debug=False):
+    def __init__(self, show_debug=False):
         """
         Initialize the ObjectTracking state machine. Define attributes and
         state transitions
 
         Args:
-            device (int or str): The video capture device or file path.
             show_debug (bool): Flag to show debugging images.
         """
-        self.device = device  # By default, look for an installed camera
-        # on the PC
+
+        self.show_debug = show_debug  # Flag to turn on all debugging figures
 
         self.subtractor_bg = None  # Handler for BackgroundSubtractor
 
@@ -65,162 +142,21 @@ class ObjectTracking(object):
 
         self.output_image = None  # Current image selected by the state machine
 
-        self.previous_output_image = None  # Backup image
+        #self.previous_output_image = None  # Backup image
 
         self.image_available_flag = False  # Flag for image availability
-
-        self.workspace_blocked = False  # Flag for workspace blocked
-
-        self.show_debug = show_debug  # Flag to turn on all debugging figures
 
         self.frame_count = 0  # Frame counter for showing debugging images
 
         # Initialize the state machine with a pseudo-state.
         # Convention will be states starting with a capital letter, and
         # transitions will have the trigger_ prefix
-        self.machine = Machine(
+        self.machine = HierarchicalMachine(
             model=self,
-            states=ObjectTracking.states,
-            initial="Start"
-        )
-
-        # Defining the transitions:
-        # Unconditional transition at Start
-        self.machine.add_transition(
-            trigger="trigger_initialize",
-            source="Start",
-            dest="Configuration"
-        )
-
-        # At Configuration state, configure the system for
-        # capturing images. When configuration ends, it checks if there is
-        # any object at the workplace. If not, transition to Monitoring
-        # state. Also, this trigger transitions to Monitoring state from
-        # the following states: Object_extraction, Tracking_objects, and
-        # Monitoring.
-        self.machine.add_transition(
-            trigger="trigger_workplace_ready",
-            source=["Configuration",
-                    "Monitoring",
-                    "Tracking_objects",
-                    "Object_extraction"],
-            dest="Monitoring",
-        )
-
-        # Else, if there is any object in the workplace, transition to
-        # state Workplace_blocked. Also, the trigger_object_blocking
-        # transitions to Workplace_blocked state from the following
-        # states: Detect_object and Workplace_blocked.
-        self.machine.add_transition(
-            trigger="trigger_object_blocking",
-            source=["Configuration",
-                    "Detect_object",
-                    "Workplace_blocked"],
-            dest="Workplace_blocked",
-        )
-
-        # At Workplace_blocked state, wait until there is any movement detected
-        # that may extract the object from the workplace. If detected,
-        # transition to state Detect_object
-        self.machine.add_transition(
-            trigger="trigger_extraction_movement",
-            source=["Workplace_blocked",
-                    "Detect_object"],
-            dest="Detect_object",
-        )
-
-        # At Detect_object state, verify if there is any contour detected in
-        # the workplace. If any contour is detected, trigger_object_blocking.
-        # If not, transition to Configuration state to reset system
-        # configuration settings.
-        self.machine.add_transition(
-            trigger="trigger_workplace_free",
-            source="Detect_object",
-            dest="Configuration",
-        )
-
-        # At the "Monitoring" state, it will capture images continuously, and
-        # change to state "Detect_object" if any object enters the scene,
-        # and keeps moving.
-        self.machine.add_transition(
-            trigger="trigger_movement_detected",
-            source=[
-                "Monitoring",
-                "Object_position",
-                "Validation_time",
-                "Tracking_objects",
-            ],
-            dest="Tracking_objects",
-        )
-
-        # At the Tracking_objects state, it will analyze if the movement in
-        # the scene stops, if there is an object contour identified
-        # and its bounding box has no intersection with the image border region
-        self.machine.add_transition(
-            trigger="trigger_object_stopped",
-            source=["Tracking_objects",
-                    "Object_position"],
-            dest="Object_position",
-        )
-
-        # At the Object_position state, any object detected near the image
-        # borders (2% of image width or height in pixels) will halt the
-        # object detection. Only when no objects are at the image borders,
-        # the trigger_object_centered is enabled and transitions to the
-        # state Validation_time. If any movement is detected while in
-        # this state, transition to the Tracking_objects state.
-        self.machine.add_transition(
-            trigger="trigger_object_centered",
-            source="Object_position",
-            dest="Validation_time",
-        )
-
-        # At the Validation_time state, the system waits for 0.5 seconds of
-        # no movement at the image borders, in order to validate that the
-        # detected object is centered and at rest. All the conditions needed
-        # for acquiring an image sample are satisfied, and the transition
-        # trigger_stabilization_time will take another image of the same object
-        # at the same position
-        self.machine.add_transition(
-            trigger="trigger_stabilization_time",
-            source="Validation_time",
-            dest="Take_image",
-        )
-
-        # At the Take_image state, the system captures the image as valid and
-        # proceeds with its transmission to the Central Server for image
-        # recognition service
-        self.machine.add_transition(
-            trigger="trigger_image_sent",
-            source="Take_image",
-            dest="Object_extraction"
-        )
-
-        # At the Object_extraction state, the system waits for the removal of
-        # the object from the workplace. If the image is sent, transitions to
-        # the Monitoring state using trigger_workplace_ready.
-        # Else, if the object remains in the workplace and is not removed
-        # after a long time, the Background Subtraction algorithm starts
-        # to integrate the object as a background image. In this condition,
-        # after the object is removed, it remains a "shadow" in the foreground
-        # image mask at the last location of the object. To correct this error,
-        # it is best to reuse the state Workplace_blocked which already solves
-        # a similar problem. The same situation may occur at the state
-        # Object_position, and the solution will be the same
-        self.machine.add_transition(
-            trigger="trigger_timeout",
-            source=["Object_extraction", "Object_position"],
-            dest="Workplace_blocked",
-        )
-
-        # At any state, it will be possible to terminate the state machine and
-        # end the execution of the program. It needs the trigger_terminate
-        # transition trigger from any state to state Stop, which ends the
-        # execution of the script
-        self.machine.add_transition(
-            trigger="trigger_terminate",
-            source="*",
-            dest="Stop"
+            states=SurgicalInstrumentTrackDetect.states,
+            transitions=SurgicalInstrumentTrackDetect.transitions,
+            initial="operational",
+            ignore_invalid_triggers=True
         )
 
     # =================================================
@@ -228,10 +164,10 @@ class ObjectTracking(object):
     # =================================================
     # Defining callbacks for functions as the state machine enters each state
 
-    def on_enter_Configuration(self):
+    def on_enter_configuration(self):
         """
-        Callback for entering the Configuration state.
-        Initializes image capture and checks for objects in the workspace.
+        Callback for entering the stop state.
+        Finalizes image capture and frees resources.
         """
         # Initialize image capture for background subtraction
         self.cap, self.subtractor_bg = bgsub.initialize_bg_sub(self.device)
@@ -905,7 +841,7 @@ to continue")
             # Store the output image
             output = self.output_image
             # Store a backup of the image
-            self.previous_output_image = self.output_image.copy()
+            #self.previous_output_image = self.output_image.copy()
 
             self.output_image = None  # Reset the output image
 
