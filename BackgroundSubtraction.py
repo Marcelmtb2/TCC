@@ -16,26 +16,27 @@ obstacles or by the hands of a technician operating the system.
 
 
 # Initialize the object capture system
-# def initialize_bg_sub(device=0):  # old V1.0
-# def initialize_bg_sub():
-#     """
-#     Initialize the background subtractor.
+def initialize_bg_sub(device=0):
+    """
+    Initialize the background subtractor and video capture device.
 
-#     Args:
-#         None
+    Args:
+        device (int or str): The video capture device or file path.
 
-#     Returns:
-#         Background Subtractor object.
-#     """
-#     # Returns the handlers for the camera object and the instance of the
-#     # background subtractor object
-#     foregroundbackgroundMOG2 = config_object_capture()
-    
-#     return foregroundbackgroundMOG2
+    Returns:
+        list: A list containing the video capture object and
+        background subtractor.
+    """
+    # Receives the device address, whether a video file or a computer
+    # camera stream.
+    # Returns the handlers for the camera object and the instance of the
+    # background subtractor object
+    foregroundbackgroundMOG2 = config_object_capture()
+    camera = cv2.VideoCapture(device)
+    return [camera, foregroundbackgroundMOG2]
 
 
-# def config_object_capture():
-def initialize_bg_sub():
+def config_object_capture():
     """
     Configure the background subtractor with default values.
 
