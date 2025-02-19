@@ -1,13 +1,6 @@
-# state machine
-
-# Melhorar Test CLI - Esperado que o backend CME controle a câmera
-# e envie frames para este algoritmo.
-# Checar estado DETECT OBJECT, para encontrar a máscara do MOG2 toda limpa
-
 import cv2
 import numpy as np
-import BackgroundSubtraction as bgsub
-# from transitions import Machine
+import BackgroundSubtractionV2 as bgsub
 from transitions.extensions import HierarchicalMachine
 from transitions.extensions.nesting import NestedState
 
@@ -135,14 +128,14 @@ class SurgicalInstrumentTrackDetect(object):
 
         self.subtractor_bg = None  # Handler for BackgroundSubtractor
 
-        self.nxt_transition = "trigger_initialize"  # First transition name
+        self.nxt_transition = None # placeholder for transition name
 
         self.terminate_flag = False  # Flag to terminate the execution of
         # this state machine
 
-        self.output_image = None  # Current image selected by the state machine
+        self.output_image = None  # selected image output by the state machine
 
-        #self.previous_output_image = None  # Backup image
+        self.received_image = None  # last image input for analysis
 
         self.image_available_flag = False  # Flag for image availability
 
@@ -166,23 +159,22 @@ class SurgicalInstrumentTrackDetect(object):
 
     def on_enter_configuration(self):
         """
-        Callback for entering the stop state.
-        Finalizes image capture and frees resources.
+        Callback for entering the configuration state.
+        Initializes resources.
         """
         # Initialize image capture for background subtraction
-        self.cap, self.subtractor_bg = bgsub.initialize_bg_sub(self.device)
-
-        # Optional code to visualize results during development
-        # Get the frame rate (FPS) of the video
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.subtractor_bg = bgsub.initialize_bg_sub()
 
         # The Configuration state detects if there is an object in the
         # workspace before starting monitoring.
-        ret, frame = self.cap.read()
-        if not ret:
+        
+
+        frame = self.received_image
+        if frame is None:
             print("Camera did not send images. Check the equipment.")
-            # Keep locked at Stop state
-            self.nxt_transition = "trigger_terminate"
+            # Terminate at Stop state
+            # self.nxt_transition = "trigger_terminate"
+            self.machine.trigger_terminate()
 
         if self.show_debug is True:
             debugframe = cv2.resize(frame, None, fx=0.3, fy=0.3,
@@ -777,10 +769,14 @@ class SurgicalInstrumentTrackDetect(object):
         # Keep locked at Stop state
         self.nxt_transition = "trigger_terminate"
 
-    def start_object_tracking(self):
+    def object_tracking(self):
         """
-        Starts the object tracking state machine.
+        Starts the object tracking state machine at every image input.
         Cycles through states and triggers transitions dynamically.
+
+        Returns:
+            list: A list containing the video captured frame or None and
+            a flag for the resulting object tracking and detection .
         """
         # This function will cycle through the states. Each state entry
         # triggers an on_enter_<<state>> callback as soon as the transition
@@ -790,10 +786,18 @@ class SurgicalInstrumentTrackDetect(object):
         # If the image is unavailable, the flag is false
         # If the image is available, the flag is true
         # If the image is read, reset the captured image flag
-        while self.terminate_flag is not True:
+        if self.terminate_flag is not True:
+            try:
+                frame = cv2.imread(self.received_image)
+
+                self.received_image = frame  # Saving the received image
+            except Exception as e:
+                print(f'Ocorreu erro ao receber imagem:/n{e}')
+
+
             print(f"{self.state}")
             # How to listen to any event that may trigger the terminate flag?
-            self.trigger(self.nxt_transition)
+            # self.trigger(self.nxt_transition)
             if self.state == "Stop":
                 output = self.get_image()
 
@@ -805,7 +809,7 @@ class SurgicalInstrumentTrackDetect(object):
                 else:
                     print("No image available")
 
-                break
+                # break
             elif self.state == "Object_extraction":
                 output = self.get_image()
 

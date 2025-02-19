@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 """
-Object Tracking and Detection Module
+Object Tracking and Detection Module V2
 
 This module implements the necessary tasks to track and detect
 the presence of one object in a video stream, in a controlled environment.
@@ -16,27 +16,7 @@ obstacles or by the hands of a technician operating the system.
 
 
 # Initialize the object capture system
-def initialize_bg_sub(device=0):
-    """
-    Initialize the background subtractor and video capture device.
-
-    Args:
-        device (int or str): The video capture device or file path.
-
-    Returns:
-        list: A list containing the video capture object and
-        background subtractor.
-    """
-    # Receives the device address, whether a video file or a computer
-    # camera stream.
-    # Returns the handlers for the camera object and the instance of the
-    # background subtractor object
-    foregroundbackgroundMOG2 = config_object_capture()
-    camera = cv2.VideoCapture(device)
-    return [camera, foregroundbackgroundMOG2]
-
-
-def config_object_capture():
+def initialize_bg_sub():
     """
     Configure the background subtractor with default values.
 
@@ -47,6 +27,7 @@ def config_object_capture():
     fgbgMOG2 = cv2.createBackgroundSubtractorMOG2(
         history=500, varThreshold=50, detectShadows=True
     )
+    # TODO: test values and explain their meaning
 
     # All default values were confirmed, as testing history and varThreshold
     # did not alter much the final result
@@ -58,7 +39,7 @@ def is_object_at_image(image, show_overlay=False):
     Check if there are contours of an object in the image.
 
     Args:
-        image: The preprocessed image.
+        image: The preprocessed resized grayscaled image.
         show_overlay (bool): Flag to show overlay images for debugging.
 
     Returns:
@@ -75,6 +56,7 @@ def is_object_at_image(image, show_overlay=False):
 
     # Discover how to make dynamic thresholding!
     # To overcome low light conditions
+    # HSV Analysis?
 
     # If the object is darker than the green background, in grayscale
     thresh_dark = cv2.threshold(image, 90, 255, cv2.THRESH_BINARY_INV)[1]
@@ -83,7 +65,7 @@ def is_object_at_image(image, show_overlay=False):
     thresh_light = cv2.threshold(image, 200, 255, cv2.THRESH_BINARY)[1]
 
     # The final mask is the bitwise OR combination of the two masks. Hysteresis
-    # tries to escape shadows on the green sheet.
+    # tries to avoid shadows on the green sheet.
     thresh = cv2.bitwise_or(thresh_dark, thresh_light)
 
     # If any contour is identified, return true
@@ -99,18 +81,10 @@ def is_object_at_image(image, show_overlay=False):
             cv2.imshow("dark mask", thresh_dark)
             cv2.imshow("light mask", thresh_light)
             cv2.imshow("light OR dark mask", thresh)
-            width_img_gray, height_img_gray = output_image.shape[0:2]
 
             # Draw all contours found
             for contour in contours:
                 x, y, w, h = cv2.boundingRect(contour)
-
-                # Problem: If there is a sharp shadow, it will be confused with
-                # an object. Use "hysteresis margin" when defining thresholds
-                # for light and dark object masks
-                if w >= 0.9 * width_img_gray:  # If a shadow contour
-                    # crosses the image from one side to the other
-                    return [False, contours]
                 cv2.rectangle(output_image, (x, y), (x + w, y + h),
                               (0, 0, 255), 2)
             # Visualize the binary image
@@ -128,24 +102,25 @@ def preprocess_image(image, show_overlay=False):
     Preprocess the image by filtering noise and resizing.
 
     Args:
-        image: The input image.
+        image: The original input image.
         show_overlay (bool): Flag to show overlay images for debugging.
 
     Returns:
         The preprocessed grayscale image.
     """
     # Filter camera scanning noise.
-    # Filters tested for low light conditions
+    # Filters tested for standard light conditions
 
-    # Image is in 16:9 format
-    height, width = image.shape[0:2]
+    # Image is in 16:9 format?
+    # Considering the following:
+    # the camera support mount is being used
     # The BRIO camera image comes in 4k (2160 x 3840)
+    height, width = image.shape[0:2]
     # Crop the image to remove the feet of the camera stand
     cropleft = int(0.21875 * width)
     cropright = int(0.77 * width)  # To crop the tip of the stand.
-    # 0.78125 was the originally thought value
-    # Completely removed with value 0.77
-
+    # 0.78125 was the original value
+    # Crop the base of the stand.
     frame = image[0:height, cropleft:cropright]
 
     # Resize to speed up processing
@@ -153,9 +128,11 @@ def preprocess_image(image, show_overlay=False):
                          interpolation=cv2.INTER_AREA)
 
     # Filtering camera scanning noise
+    # TODO: test values and explain their meaning
     f_bilateral = cv2.bilateralFilter(reduced, d=9, sigmaColor=75,
                                       sigmaSpace=125)
-    # Create images of gaussian blur, median filter, and bilateral filter
+    
+    # TODO: Create images of gaussian blur, median filter, and bilateral filter
     # f_bilateral = cv2.GaussianBlur()
 
     # Convert to grayscale
