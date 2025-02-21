@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
 import BackgroundSubtractionV2 as bgsub
+from transitions import Machine
 from transitions.extensions import HierarchicalMachine
 from transitions.extensions.nesting import NestedState
 
-NestedState.separator = '►'  # Alt+16 parent►child
+# NestedState.separator = '►'  # Alt+16 parent►child
+# Caracteres unicode não pode estar em nome de identificadores python!
 
 class SurgicalInstrumentTrackDetect(object):
     """
@@ -26,7 +28,7 @@ class SurgicalInstrumentTrackDetect(object):
 
     # Defining states, following the image acquisition requirements
     # using the hierarchical state model
-    states = ['stop', 
+    states = ['stop', 'start',
               {'name': 'operational',
               'initial': 'configuration',
               'children':[
@@ -49,70 +51,79 @@ class SurgicalInstrumentTrackDetect(object):
     transitions = [
         # Transitions Hierarchical level 0
 
+        # Unconditional initialize, from start to operational.
+        # Start is a pseudo-state, waiting for the signal of
+        # trigger_initialize, after the image is ready for 
+        # analysis
+        ['trigger_initialize', 'start', 'operational'],
+
         # Unconditional terminate, from any state/substate
-        ['trigger_terminate',
-         'operational', 'stop'],
+        ['trigger_terminate', 'operational', 'stop'],
 
         # Transitions Hierarchical level 1
 
         # If any object is in the workplace, transition
         # to Error state, and reconfigure system
         ['trigger_workplaceBlocked',
-         'operational►configuration', 'operational►error'],
+         'operational_configuration', 'operational_error'],
+
+        # Reflexive transition while error is not cleared
+        ['reflexive_error',
+         'operational_error', '=']
 
         # If no contour is detected in the workplace, transition to
         # configuration state to reset system settings.
         ['trigger_emptyWorkplace',
-         'operational►error', 'operational►configuration'],
+         'operational_error', 'operational_configuration'],
 
         # When configuration ends, if no object is at the workplace,
         # transition to Monitoring state
         ['trigger_workplaceReady',
-         'operational►configuration', 'operational►monitoring'],
+         'operational_configuration', 'operational_monitoring'],
 
         # If an object remains in the workplace after a long time,
         # the Background Subtraction algorithm integrate it as background.
         # In this condition, after the object is removed, it remains a 
         # "shadow" in the image mask at the last location of the object.
         ['trigger_timeout',
-         'operational►monitoring', 'operational►error'],
+         'operational_monitoring', 'operational_error'],
 
         # At the takeImage state, the system captures and make the image
         # available for transmission to the image recognition Server.
         ['trigger_imageSent',
-         'operational►takeImage', 'operational►monitoring'],
+         'operational_takeImage', 'operational_monitoring'],
 
         # Transitions Hierarchical level 2
 
         # At the monitoring state, it will capture images, and change to the
         # state tracking if any object enters the scene, and keeps moving.
         ['trigger_movement_detected',
-         'operational►monitoring►workplaceFree',
-         'operational►monitoring►tracking'],
+         'operational_monitoring_workplaceFree',
+         'operational_monitoring_tracking'],
         
         # At the tracking state, if no object is in the scene, fallback to
         # the workplaceFree state.
         ['trigger_noObject',
-         'operational►monitoring►tracking',
-         'operational►monitoring►workplaceFree'],
+         'operational_monitoring_tracking',
+         'operational_monitoring_workplaceFree'],
 
         # If the object is present, check if it is away from borders and if
         # it has no movement in the scene at the centered state.
         ['trigger_objectStopped',
-         'operational►monitoring►tracking',
-         'operational►monitoring►centered'],
+         'operational_monitoring_tracking',
+         'operational_monitoring_centered'],
 
         # If the object is reaching the margin region near the image borders,
         # it is not considered at rest, going back to the tracking state.
         ['trigger_readjustPosition',
-         'operational►monitoring►centered',
-         'operational►monitoring►tracking'],
+         'operational_monitoring_centered',
+         'operational_monitoring_tracking'],
 
         # The object is centered and immobile, so take the current frame and
         # make it available to the image recognition service.
         ['trigger_imageOk',
-         'operational►monitoring►centered',
-         'operational►takeImage'],
+         'operational_monitoring_centered',
+         'operational_takeImage'],
     ]
 
     def __init__(self, show_debug=False):
@@ -139,7 +150,7 @@ class SurgicalInstrumentTrackDetect(object):
 
         self.image_available_flag = False  # Flag for image availability
 
-        self.frame_count = 0  # Frame counter for showing debugging images
+        self.workplace_activity = False  # Flag for movement in the workplace
 
         # Initialize the state machine with a pseudo-state.
         # Convention will be states starting with a capital letter, and
@@ -148,125 +159,120 @@ class SurgicalInstrumentTrackDetect(object):
             model=self,
             states=SurgicalInstrumentTrackDetect.states,
             transitions=SurgicalInstrumentTrackDetect.transitions,
-            initial="operational",
-            ignore_invalid_triggers=True
+            initial="start",
+            ignore_invalid_triggers=True,
+            auto_transitions=False
         )
+
+    def is_frame_error(self):
+        if self.received_image is None:
+            print("Camera did not send images. Check the equipment.")
+            # Terminate at Stop state
+            self.nxt_transition = "trigger_terminate"
+            return True
+        return False
+    
+
+    def show_debug_frame(self, frame):
+        if self.show_debug is True:
+            debugframe = cv2.resize(frame, None, fx=0.3, fy=0.3,
+                                    interpolation=cv2.INTER_NEAREST)
+            cv2.imshow('debug', debugframe)
+            print('Frame correto')
 
     # =================================================
     # State callbacks
     # =================================================
     # Defining callbacks for functions as the state machine enters each state
 
-    def on_enter_configuration(self):
+    # The initial state, "start", does not trigger the on_enter_<state>
+    # method!
+
+    def on_enter_operational_configuration(self):
         """
         Callback for entering the configuration state.
         Initializes resources.
         """
-        # Initialize image capture for background subtraction
+        # Initialize image capture for background subtraction 
         self.subtractor_bg = bgsub.initialize_bg_sub()
 
         # The Configuration state detects if there is an object in the
         # workspace before starting monitoring.
-        
-
         frame = self.received_image
-        if frame is None:
-            print("Camera did not send images. Check the equipment.")
-            # Terminate at Stop state
-            # self.nxt_transition = "trigger_terminate"
-            self.machine.trigger_terminate()
-
-        if self.show_debug is True:
-            debugframe = cv2.resize(frame, None, fx=0.3, fy=0.3,
-                                    interpolation=cv2.INTER_NEAREST)
-            cv2.imshow('debug', debugframe)
-
-        # Preprocess the image by filtering noise and resizing.
-        preproc_image = bgsub.preprocess_image(frame)
-
-        # Check if the first frame contains contours of an object.
-
-        self.blocking_object = bgsub.is_object_at_image(preproc_image,
-                                                        self.show_debug)[0]
-
-        # Determine if the workspace is free or not and trigger the
-        # appropriate transition
-        if self.blocking_object:
-            self.nxt_transition = "trigger_object_blocking"
-            print("Object detected in the workspace")
+        # if frame is None:
+        #     print("Camera did not send images. Check the equipment.")
+        #     # Terminate at Stop state
+        #     self.nxt_transition = "trigger_terminate"
+        if self.is_frame_error():
+            return
         else:
-            self.nxt_transition = "trigger_workplace_ready"
-            print("Workspace is free")
+            self.show_debug_frame(frame)
 
-    def on_enter_Workplace_blocked(self):
-        """
-        Callback for entering the Workplace_blocked state.
-        Waits for movement to remove the object from the workspace.
-        """
-        # The video stream started with an object in the workspace
-        # Or there was a Timeout in the Object position or Object extraction
-        # states. Look for movement in the video to remove the object
-        # Remember that the learning rate at this stage needs to be
-        # set to 0.1 to quickly forget the shadow of the removed object.
-        workplace_activity = False
-        while workplace_activity is not True:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Camera did not send images. Check the equipment.")
-                # Create a way to handle this type of error
-                # Keep locked at Stop state
-                self.nxt_transition = "trigger_terminate"
-                break
+            # Preprocess the image by filtering noise and resizing.
+            preproc_image = bgsub.preprocess_image(frame)
 
-            if self.show_debug is True:
-                debugframe = cv2.resize(frame, None, fx=0.3, fy=0.3,
-                                        interpolation=cv2.INTER_NEAREST)
-                cv2.imshow('debug', debugframe)
+            # Check if the first frame contains contours of an object.
+            self.blocking_object = bgsub.is_object_at_image(preproc_image,
+                                                            self.show_debug)[0]
 
-            learning_rate = 0.1  # There is an object present in the image,
-            # setting the learningRate to a high value, greater than 0.01.
-            # Using parentheses in unpacking does not create a tuple!
-            (valid_boxes,
-             border_boxes,
-             final_object_box) = bgsub.locate_object(self.subtractor_bg, frame,
-                                                     learning_rate)
-
-            if valid_boxes or border_boxes:
-                # The workplace has movement, transition to Detect_object
-                workplace_activity = True
-                self.nxt_transition = "trigger_extraction_movement"
+            # Determine if the workspace is free or not and trigger the
+            # appropriate transition
+            if self.blocking_object:
+                self.nxt_transition = "trigger_workplaceBlocked"
+                print("Object detected in the workspace")
             else:
-                # No movement in the workspace, will not exit the loop
+                self.nxt_transition = "trigger_workplaceReady"
+                print("Workspace is free")
+
+            # guarantee the output at every state
+            self.image_available_flag = False
+            self.output_image = None
+
+    def on_enter_operational_error(self):
+        """
+        Callback for entering the error state.
+        Waits for removal of the object from the workspace.
+        """
+        # REFACTOR: Coalesces old Workspace_Blocked and Detect_Object states
+
+        # The input frames started with an object in the workspace,
+        # or there was a Timeout event in the Monitoring superstate.
+        # Look for movement in the video to remove the object
+
+        # workplace_activity = False
+        # while workplace_activity is not True:
+        frame = self.received_image
+        if self.is_frame_error():
+            return
+        else:
+            self.show_debug_frame(frame)
+
+        learning_rate = 0.1  # Set the learning rate at this stage needs to be
+        # set to 0.1 to quickly forget the shadow of the removed object.
+        # Setting the learningRate to a high value, greater than 0.01.
+        # Aprox. 10 frames to clear the background model
+        # Using parentheses in unpacking does not create a tuple!
+        # check if there is an object by the contour in the image
+        preproc_img = bgsub.preprocess_image(frame)
+        (valid_boxes,
+         border_boxes,
+         _) = bgsub.locate_object(self.subtractor_bg, frame, learning_rate)
+        
+        if self.workplace_activity is False:
+            # preferir forma if len(valid_boxes) > 0 or len(border_boxes) > 0:?
+            if valid_boxes or border_boxes:
+                # The workplace has movement, look for no object next iteration
+                self.workplace_activity = True
+            else:
+                # No movement in the workspace.
                 # Keep the next transition as object blocking in case something
                 # in pytransitions causes it to exit this state
-                workplace_activity = False
-                self.nxt_transition = "trigger_object_blocking"
-
-    def on_enter_Detect_object(self):
-        """
-        Callback for entering the Detect_object state.
-        Waits for movement to stop and checks for object contours.
-        """
-        # The transition to here occurs only if movement was detected. Now
-        # it will wait for the movement to stop and check if there are object
-        # contours in the workspace. If there are, it returns to
-        # Workplace_blocked. If not, it proceeds to Configuration
-        workplace_activity = True
-        while workplace_activity is True:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Camera did not send images. Check the equipment.")
-                # Create a way to handle this type of error
-                break
-
-            if self.show_debug is True:
-                debugframe = cv2.resize(frame, None, fx=0.3, fy=0.3,
-                                        interpolation=cv2.INTER_NEAREST)
-                cv2.imshow('debug', debugframe)
-
-            learning_rate = 0.1  # There is an object present in the image,
-            # setting the learningRate to a high value, greater than 0.01.
-            # Using parentheses in unpacking does not create a tuple!
+                self.workplace_activity = False
+            self.nxt_transition = "reflexive_error"  # For firing this method again
+        else:
+        # Check if there are object contours in the workspace. If yes, it returns to
+        # workplace_activity = False. If not, it proceeds to Configuration
+        
             (valid_boxes,
              border_boxes,
              final_object_box) = bgsub.locate_object(self.subtractor_bg,
@@ -283,20 +289,20 @@ class SurgicalInstrumentTrackDetect(object):
 
                 if self.blocking_object is True:
                     # No movement in the workplace and the object remains.
-                    # Return to Workplace_blocked state
-                    workplace_activity = False
-                    self.nxt_transition = "trigger_object_blocking"
+                    # Return to workplace_activity = False
+                    self.workplace_activity = False
+                    self.nxt_transition = "reflexive_error"
                 else:
                     # No object contour. Proceed to the Configuration state
-                    workplace_activity = False
-                    self.nxt_transition = "trigger_workplace_free"
+                    self.workplace_activity = False
+                    self.nxt_transition = "trigger_emptyWorkplace"
 
             else:
                 # There is movement in the workspace, will not exit the loop
                 # Keep the transition as trigger_extraction_movement in case
                 # something in pytransitions causes it to exit this state
-                workplace_activity = True
-                self.nxt_transition = "trigger_extraction_movement"
+                self.workplace_activity = True
+                self.nxt_transition = "reflexive_error"
 
     # Note: the same frame detected in Monitoring state must be used up to the
     # state Object_extraction? No need, as the same background subtractor
@@ -756,7 +762,7 @@ class SurgicalInstrumentTrackDetect(object):
                     workplace_move_activity = True
                     self.nxt_transition = "trigger_workplace_ready"
 
-    def on_enter_Stop(self):
+    def on_enter_stop(self):
         """
         Callback for entering the Stop state.
         Terminates the state machine.
@@ -764,12 +770,10 @@ class SurgicalInstrumentTrackDetect(object):
         # Terminate the state machine
         self.terminate_flag = True  # Flag to terminate the state machine
         print("State machine terminated")
-        # Free the camera resource
-        self.cap.release()
         # Keep locked at Stop state
         self.nxt_transition = "trigger_terminate"
 
-    def object_tracking(self):
+    def object_tracking(self, picture):
         """
         Starts the object tracking state machine at every image input.
         Cycles through states and triggers transitions dynamically.
@@ -780,55 +784,71 @@ class SurgicalInstrumentTrackDetect(object):
         """
         # This function will cycle through the states. Each state entry
         # triggers an on_enter_<<state>> callback as soon as the transition
-        # ends. Use the .trigger('next_state') method, where the next state is
-        # defined dynamically
+        # ends. Start the sequence of state transitions with an unconditional
+        # trigger_initialize after the input image was received
         # Outputs are the captured image flag and the selected image.
         # If the image is unavailable, the flag is false
         # If the image is available, the flag is true
         # If the image is read, reset the captured image flag
         if self.terminate_flag is not True:
             try:
-                frame = cv2.imread(self.received_image)
-
+                image_data = np.frombuffer(picture, dtype=np.uint8)
+                frame = cv2.imdecode(image_data, cv2.IMREAD_COLOR)
                 self.received_image = frame  # Saving the received image
             except Exception as e:
                 print(f'Ocorreu erro ao receber imagem:/n{e}')
 
+            # Displaying which is the state machine current state during debug
+            if self.show_debug:
+                print(f"Initial state: {self.state}")
 
-            print(f"{self.state}")
-            # How to listen to any event that may trigger the terminate flag?
-            # self.trigger(self.nxt_transition)
-            if self.state == "Stop":
-                output = self.get_image()
+            # As the input picture is available, start the state machine
+            if self.state == "start":
+                self.trigger_initialize()
+                print(f"Initial state: {self.state}")
+            else:
+            # When the trigger is called, it executes the on_enter_<state>?
+                self.trigger(self.nxt_transition)
+            
+            if self.show_debug:
+                print(f"Final state: {self.state}") 
 
-                if output is not None:
-                    print("Image available")
-                    cv2.imshow("Output image", output)
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
-                else:
-                    print("No image available")
+            if self.state == "stop":
+                # decomission the object
+                pass
+                # TODO: Finish this!
+            return self.image_available_flag, self.get_image()
+#             if self.state == "Stop":
+#                 output = self.get_image()
 
-                # break
-            elif self.state == "Object_extraction":
-                output = self.get_image()
+#                 if output is not None:
+#                     print("Image available")
+#                     cv2.imshow("Output image", output)
+#                     cv2.waitKey(0)
+#                     cv2.destroyAllWindows()
+#                 else:
+#                     print("No image available")
 
-                if output is not None:
-                    print("Image available. Click the image and press any key \
-to continue")
-                    cv2.imshow("Output image", output)
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
-                else:
-                    print("No image available")
+#                 # break
+#             elif self.state == "Object_extraction":
+#                 output = self.get_image()
 
-                print("Object extraction state reached and image captured.")
-                print("Analyze the video for an another object detection?")
-                next_round = input('(Y/N):')
-                if next_round.upper() == 'Y':
-                    self.trigger("trigger_image_sent")
-                else:
-                    self.trigger("trigger_terminate")
+#                 if output is not None:
+#                     print("Image available. Click the image and press any key \
+# to continue")
+#                     cv2.imshow("Output image", output)
+#                     cv2.waitKey(0)
+#                     cv2.destroyAllWindows()
+#                 else:
+#                     print("No image available")
+
+#                 print("Object extraction state reached and image captured.")
+#                 print("Analyze the video for an another object detection?")
+#                 next_round = input('(Y/N):')
+#                 if next_round.upper() == 'Y':
+#                     self.trigger("trigger_image_sent")
+#                 else:
+#                     self.trigger("trigger_terminate")
 
     def get_image(self):
         """
@@ -894,21 +914,21 @@ if __name__ == "__main__":
                     "OclusãoTempMão.mp4"
                     ]
 
-    # - To generate HSV values of the background
-    # object23 = "TemperaturaCor3k_9k.mp4"
+#     # - To generate HSV values of the background
+#     # object23 = "TemperaturaCor3k_9k.mp4"
 
-    # - HSV values of the background
-    # object24 = "ContrasteTemperaturaCor3k_9k.mp4"
+#     # - HSV values of the background
+#     # object24 = "ContrasteTemperaturaCor3k_9k.mp4"
 
-    # Select the object video
-    # object = object17
+#     # Select the object video
+#     # object = object17
 
-    # Consider in the final version that the device should be a camera
-    # Initialize image capture
-    # device = folder + videosamples
-    # If using the main camera, comment the previous line and uncomment
-    # the following line
-    # device = 0
+#     # Consider in the final version that the device should be a camera
+#     # Initialize image capture
+#     # device = folder + videosamples
+#     # If using the main camera, comment the previous line and uncomment
+#     # the following line
+#     # device = 0
     user_choosing = True
     while user_choosing is True:
         try:
@@ -934,16 +954,42 @@ and {len(videosamples)}. Choose 0 for live camera feed: "))
             print("Invalid input. Please, insert an integer number.")
 
     device = caminho_completo
+    camera = cv2.VideoCapture(device)
+    supervisor = SurgicalInstrumentTrackDetect(True)
 
-    supervisor = ObjectTracking(device, True)
+    while supervisor.terminate_flag is not True:  # Enquanto a statemachine não encerra
+        ret, frame = camera.read()
+        if not ret:
+            print("Camera did not send images. Check the equipment.")
+            # Terminate the state machine
+            supervisor.trigger_terminate()
+        # imagem corretamente capturada, e deve ser convertida para um arquivo tipo .jpeg, mas
+        # sem armazenar em disco
+        ret, buffer = cv2.imencode('.jpg', frame)
+        if ret:
+            # Converte o buffer para bytes, se necessário
+            jpeg_bytes = buffer.tobytes()
+            print("Frame convertido para JPEG em memória.")
+        else:
+            print("Falha na codificação JPEG.")
 
-    print('Test program for object detection state machine.')
+        # Chamar a rotina da máquina de estados que tem o jpeg_bytes como input e
+        # uma lista [flag, imagem\None]
 
-    print('Press any key to start the state machine.')
-    _ = input()
-    print('State machine started.')
-    print('Current state: ', supervisor.state)
+        flag, image = supervisor.object_tracking(jpeg_bytes)
+#     print('Test program for object detection state machine.')
 
-    supervisor.start_object_tracking()
-    # supervisor.trigger_initialize
-    # print(supervisor.state)
+#     print('Press any key to start the state machine.')
+#     _ = input()
+#     print('State machine started.')
+#     print('Current state: ', supervisor.state)
+
+#     supervisor.start_object_tracking()
+#     # supervisor.trigger_initialize
+#     # print(supervisor.state)
+
+    # Segunda versão do CLI de teste
+    # Os frames do vídeo serão lidos externamente e enviados individualmente para
+    # a máquina de estado.
+    # O método que invoca a máquina deve receber a imagem e uma flag de debug
+    # Se a flag de debug estiver ligada, mostra o estado atual da máquina
