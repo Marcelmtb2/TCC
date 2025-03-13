@@ -341,7 +341,7 @@ if __name__ == "__main__":
     object24 = "ContrasteTemperaturaCor3k_9k.mp4"
 
     # Select the object video
-    object = object2
+    object = object1
 
     # Consider in the final version that the device should be a camera
     # Initialize image capture
@@ -431,7 +431,7 @@ if __name__ == "__main__":
                 iou = intersection_area / union_area
                 # Calculate the Jaccard index (IoU)
                 # Set a threshold to consider a good match
-                threshold = 0.8
+                threshold = 0.7
                 print(iou)
                 if iou > threshold:
                     print("Contour and mask match!")

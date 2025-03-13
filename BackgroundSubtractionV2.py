@@ -89,7 +89,7 @@ def is_object_at_image(image, show_overlay=False):
                               (0, 0, 255), 2)
             # Visualize the binary image
             cv2.imshow("Binary image", output_image)
-            # cv2.waitKey(0)
+            cv2.waitKey(10)
         return [True, contours]
     return [False, contours]
     # Find contours of objects before background subtraction. If there are any
@@ -141,7 +141,7 @@ def preprocess_image(image, show_overlay=False):
     # Debug - see the original image before filtering
     if show_overlay:
         cv2.imshow("Cropped and resized image", reduced)
-
+        cv2.waitKey(10)
     return gray_frame
 
 
@@ -326,7 +326,7 @@ if __name__ == "__main__":
     # If using the main camera, comment the previous line and uncomment
     # the following line
     # device = 0
-
+    camera = cv2.VideoCapture(device)
     cap, fgbgMOG2 = initialize_bg_sub(device)
 
     # Initialize the check for object presence at the beginning of the video.
