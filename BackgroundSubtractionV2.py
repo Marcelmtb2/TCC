@@ -97,6 +97,37 @@ def is_object_at_image(image, show_overlay=False):
     # present in the image
 
 
+def image_rotation_compare(image1, image2):
+    gray1 = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
+    _, thresh1 = cv2.threshold(gray1, 50, 255, cv2.THRESH_BINARY)
+    contours1, _ = cv2.findContours(thresh1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    gray2 = cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY)
+    _, thresh2 = cv2.threshold(gray2, 50, 255, cv2.THRESH_BINARY)
+    contours2, _ = cv2.findContours(thresh2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not (contours1 or contours2):
+        return None
+
+    largest_contour1 = max(contours1, key=cv2.contourArea)
+    moments1 = cv2.moments(largest_contour1)
+
+    largest_contour2 = max(contours2, key=cv2.contourArea)
+    moments2 = cv2.moments(largest_contour2)
+
+    if moments1["mu20"] + moments1["mu02"] == 0:
+        return None
+    
+    if moments2["mu20"] + moments2["mu02"] == 0:
+        return None
+
+    angle1 = 0.5 * np.arctan2(2 * moments1["mu11"], moments1["mu20"] - moments1["mu02"])
+
+    angle2 = 0.5 * np.arctan2(2 * moments2["mu11"], moments2["mu20"] - moments2["mu02"])
+
+    return np.degrees(abs(angle1 - angle2))  # Converter de radianos para graus
+
+
 def preprocess_image(image, show_overlay=False):
     """
     Preprocess the image by filtering noise and resizing.
