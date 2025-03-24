@@ -8,16 +8,15 @@ class SurgicalInstrumentTrackDetect(object):
     A state machine for object tracking using background subtraction.
 
     Attributes:
-        # device (int or str): The video capture device or file path.
+        show_debug (bool): Flag to show debugging images.
         subtractor_bg: The background subtractor object.
         nxt_transition (str): The next transition trigger.
         terminate_flag (bool): Flag to terminate the state machine.
+        counter(int): Generic counter for counting frames in states
         output_image: The current image selected by the state machine.
         # previous_output_image: The backup image selected by the state machine.
         image_available_flag (bool): Flag indicating if an image is available.
-        workspace_blocked (bool): Flag indicating if the workspace is blocked.
-        show_debug (bool): Flag to show debugging images.
-        frame_count (int): Frame counter for debugging images.
+        workspace_activity (bool): Flag indicating movement in the workspace.
         machine: The state machine object.
     """
 
@@ -47,7 +46,7 @@ class SurgicalInstrumentTrackDetect(object):
         # Transitions Hierarchical level 0
 
         # Unconditional initialize, from start to operational.
-        # Start is a pseudo-state, waiting for the signal of
+        # Start is a pseudo-state, waiting for the signal
         # trigger_initialize, after the image is ready for 
         # analysis
         ['trigger_initialize', 'start', 'operational'],
@@ -148,7 +147,7 @@ class SurgicalInstrumentTrackDetect(object):
 
         self.old_mask = None  # Placeholder to the binary mask for detecting movement
 
-        self.counter = 0  # Generic counter for state
+        self.counter = 0  # Generic counter for counting frames in states
 
         self.output_image = None  # selected image output by the state machine
 
@@ -158,9 +157,9 @@ class SurgicalInstrumentTrackDetect(object):
 
         self.workplace_activity = False  # Flag for movement in the workplace
 
-        # Initialize the state machine with a pseudo-state.
-        # Convention will be states starting with a capital letter, and
-        # transitions will have the trigger_ prefix
+        # Initialize the state machine with a 'start' pseudo-state.
+        # Convention will be transitions will have the trigger_ prefix,
+        # states will not have 
         self.machine = HierarchicalMachine(
             model=self,
             states=SurgicalInstrumentTrackDetect.states,
@@ -184,7 +183,7 @@ class SurgicalInstrumentTrackDetect(object):
             debugframe = cv2.resize(frame, None, fx=0.3, fy=0.3,
                                     interpolation=cv2.INTER_NEAREST)
             cv2.imshow('debug', debugframe)
-            cv2.waitKey(10)
+            cv2.waitKey(10) # For showing images during VSCode Debug session
             print('Frame correto')
 
     # =================================================
@@ -192,8 +191,8 @@ class SurgicalInstrumentTrackDetect(object):
     # =================================================
     # Defining callbacks for functions as the state machine enters each state
 
-    # The initial state, "start", does not trigger the on_enter_<state>
-    # method!
+    # The initial state, "start", does not trigger the on_enter_start
+    # method! It needs to manually trigger another transition
 
     def on_enter_operational_configuration(self):
         """
@@ -206,16 +205,12 @@ class SurgicalInstrumentTrackDetect(object):
         # The Configuration state detects if there is an object in the
         # workspace before starting monitoring.
         frame = self.received_image
-        # if frame is None:
-        #     print("Camera did not send images. Check the equipment.")
-        #     # Terminate at Stop state
-        #     self.nxt_transition = "trigger_terminate"
         if self.is_frame_error():
-            return
+            return  # terminate state machine if there are errors in image transmission
         else:
             self.show_debug_frame(frame)
 
-            # Preprocess the image by filtering noise and resizing.
+            # Preprocess the image by filtering noise, grayscaling and resizing it.
             preproc_image = bgsub.preprocess_image(frame, self.show_debug)
 
             # Check if the first frame contains contours of an object.
@@ -307,25 +302,53 @@ class SurgicalInstrumentTrackDetect(object):
         Waits for movement in the workspace.
         """
         # Workspace without an object. Wait until there is movement
-        #workplace_activity = False
-        # while workplace_activity is not True:
         frame = self.received_image
         if self.is_frame_error():
             return
-        else:
+        
+        if self.show_debug is True:
             self.show_debug_frame(frame)
 
-            # Using parentheses in unpacking does not create a tuple!
-            (valid_boxes,
-             border_boxes,
-             _) = bgsub.locate_object(self.subtractor_bg, frame)
+        # If there is no previous transmitted image, must look for a free
+        # workplace. Else, if the current image is more than 90% similar
+        # to the previously sent image, consider as the no movement case
+        # Also, look for timeout condition, of having contour of object
+        # image but no located object by the bgsubMOG2 method.
 
-            if valid_boxes or border_boxes:
-                # The workplace has movement, transition to tracking state
+        # Using parentheses in unpacking does not create a tuple!
+        (valid_boxes,
+         border_boxes,
+         _) = bgsub.locate_object(self.subtractor_bg, frame)
+        
+        if self.output_image is None:  # No previous images
+            if valid_boxes or border_boxes:  # No object detected
+            # The workplace has movement, transition to tracking state
                 self.nxt_transition = "trigger_movementDetected"
             else:
                 # No movement in the workspace, will not exit this state
                 self.nxt_transition = "reflexive_workplaceFree"
+
+                # Test for the timeout condition - no foreground object detected
+                # but there is an object at the workplace
+                if bgsub.is_object_at_image(frame) is True:
+                    # Timeout ocorreu, pois não há contorno de objeto em
+                    # movimento e existe contorno de objeto no frame
+                    self.nxt_transition = 'trigger_timeout'
+
+        else:  # another image exists from past cycles
+            # Compare current image with the previous one
+            comparison_angle = bgsub.image_rotation_compare(frame, self.output_image)
+            if comparison_angle < 15:
+                # Images are not sufficiently different
+                self.nxt_transition = "reflexive_workplaceFree"
+
+            elif comparison_angle is None:  # cannot compare (circular symmetry object)
+                # only solution may be a timeout
+                self.nxt_transition = "reflexive_workplaceFree"
+
+            else:  # angle greater than 15 degrees mean
+                self.nxt_transition = "trigger_movementDetected"
+
         # Guarantee the output at every state
         self.image_available_flag = False
         self.output_image = None
@@ -335,8 +358,10 @@ class SurgicalInstrumentTrackDetect(object):
         Callback for entering the tracking state.
         Tracks if movement has stopped and checks for object contours.
         """
-        # Supposing there is only one object. If found stopped objects, proceed to
-        # centered state. If not, return to workspaceFree state.
+        # Supposing there is only one object. Many objects will be grouped
+        # as pieces of a bigger object
+        # If found stopped objects, proceed to centered state.
+        # If not, return to workspaceFree state.
         # Does not differentiate between objects at the edges or in the center
         # of the frames.
 
@@ -430,9 +455,6 @@ class SurgicalInstrumentTrackDetect(object):
         # Finally, if the object is centered, it will trigger the transition
         # imageOk.
 
-        # workplace_move_activity = False
-        # first_frame = True
-
         frame = self.received_image
         if self.is_frame_error():
             return
@@ -464,20 +486,28 @@ class SurgicalInstrumentTrackDetect(object):
         Captures the image of the object and sets the image available flag.
         """
         # Capture the image of the object and send it to the central server
+        # TODO: Avoid repeated images to be sent to server!
         frame = self.received_image
         if self.is_frame_error():
             return
         else:
             self.show_debug_frame(frame)
+
             
-            self.output_image = frame
-            self.image_available_flag = True
             self.nxt_transition = "trigger_image_sent"
             print("Image captured")
-            resized = cv2.resize(frame, (640, 480))
+            resized = cv2.resize(frame, None, fx=0.4, fy=0.4,
+                                    interpolation=cv2.INTER_NEAREST)
             cv2.imshow("captured", resized)
-            cv2.waitKey(0)
+            cv2.waitKey(0) # stop the debugging only when image is captured
             # cv2.destroyAllWindows()
+
+            # Guarantee the output at every state
+            self.output_image = frame
+            self.image_available_flag = True
+    
+    # For accepting new images, it is not required to remove completely the
+    # object, but it must be in a different position
 
     def on_enter_stop(self):
         """
@@ -500,8 +530,9 @@ class SurgicalInstrumentTrackDetect(object):
         Cycles through states and triggers transitions dynamically.
 
         Returns:
-            list: A list containing the video captured frame or None and
-            a flag for the resulting object tracking and detection .
+            list: A list containing a flag for the resulting object
+            tracking and detection and
+            the video captured frame or None.
         """
         # This function will cycle through the states. Each state entry
         # triggers an on_enter_<<state>> callback as soon as the transition
@@ -591,6 +622,9 @@ if __name__ == "__main__":
     # Complex video with various adverse conditions
     # cap = cv2.VideoCapture(r"video\video.mp4")
 
+    # Each video will be a test case, for various image conditions
+    # that may happen during normal operation
+
     videosamples = [  # Generic objects
                     "cabo luz off.mp4",
                     "caixa clara movimento maos luz on.mp4",
@@ -616,11 +650,11 @@ if __name__ == "__main__":
                     "OclusãoTempMão.mp4"
                     ]
 
-#     # - To generate HSV values of the background
-#     # object23 = "TemperaturaCor3k_9k.mp4"
+    # - To generate HSV values of the background
+    # object23 = "TemperaturaCor3k_9k.mp4"
 
-#     # - HSV values of the background
-#     # object24 = "ContrasteTemperaturaCor3k_9k.mp4"
+    # - HSV values of the background
+    # object24 = "ContrasteTemperaturaCor3k_9k.mp4"
 
     try:
         # Ask user for a number corresponding to a video and 0 to camera
@@ -652,20 +686,21 @@ and {len(videosamples)}. Choose 0 for live camera feed: "))
 ## ========================================
 ## Simulating the CME_VISION_API
 ## Instantiating the FSM Controller Object
+    # Argument True is for enabling the debug
     supervisor = SurgicalInstrumentTrackDetect(True)
 
 
 ## ========================================
-## Simulating the CME_VISION_API
-## Calling the FSM methods
+## Simulating the CME_VISION_API, calling externally the FSM methods
+
     while supervisor.terminate_flag is not True:  # Enquanto a statemachine não encerra
         ret, frame = camera.read()
         if not ret:
             print("Camera did not send images. Check the equipment.")
             # Terminate the state machine
             supervisor.trigger_terminate()
-        # imagem corretamente capturada, e deve ser convertida para um arquivo tipo .jpeg, mas
-        # sem armazenar em disco
+        # imagem corretamente capturada, e deve ser convertida para um arquivo tipo
+        #  .jpeg, mas sem armazenar em disco
         ret, buffer = cv2.imencode('.jpg', frame)
         if ret:
             # Converte o buffer para bytes, se necessário
