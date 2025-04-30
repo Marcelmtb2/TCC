@@ -54,6 +54,65 @@ This module implements a state machine for object tracking using background subt
 - **trigger_timeout**: Transition to Workplace_blocked state from various states.
 - **trigger_terminate**: Transition to Stop state from any state.
 
+## V2 Files
+
+The v2 version of the system implements a similar state machine but is designed to work in scenarios where frames are provided externally, rather than being captured directly from a camera or video file. This allows integration with external applications that handle frame acquisition and preprocessing.
+
+### Project Structure (V2)
+
+- **BackgroundSubtraction_v2.py**: Contains functions for processing externally provided frames, detecting objects, and identifying contours.
+- **statemachine_v2.py**: Implements a state machine for object tracking using the `transitions` library. It defines states and transitions similar to the original version but expects frames to be passed in from an external source.
+
+### BackgroundSubtraction_v2.py
+
+This module provides the necessary functions to process externally provided frames for object tracking.
+
+#### Functions
+
+- **initialize_bg_sub_v2()**: Initializes the background subtractor for processing external frames.
+- **config_object_capture_v2()**: Configures the background subtractor with default values for external frame processing.
+- **is_object_at_image_v2(frame, show_overlay=False)**: Checks if there are contours of an object in the provided frame.
+- **preprocess_image_v2(frame, show_overlay=False)**: Preprocesses the frame by filtering noise and resizing.
+- **find_foreground_object_v2(frame, learning_rate=0.0001)**: Identifies objects moving relative to the background in the provided frame.
+- **identify_contours_v2(object_found_binary_mask)**: Locates contours of the possible object in the binary mask.
+- **locate_object_v2(frame, learning_rate=0.0001)**: Locates the object in the preprocessed frame.
+
+### statemachine_v2.py
+
+This module implements a state machine for object tracking using externally provided frames. It defines states and transitions similar to the original version but is adapted for frame-based input.
+
+#### States
+
+The states in `statemachine_v2.py` are identical to those in the original `statemachine.py` but operate on externally provided frames instead of directly controlling the camera.
+
+#### Transitions
+
+The transitions in `statemachine_v2.py` are also identical to those in the original `statemachine.py`, with the key difference being that they rely on frames passed in from an external source.
+
+### Usage (V2)
+
+1. Clone the repository.
+2. Ensure you have Miniconda installed. Create and activate the environment using the `environment.yml` file:
+   ```bash
+   conda env create -f environment.yml
+   conda activate cme
+   ```
+3. Run the `statemachine_v2.py` script to start the object tracking state machine for external frame input.
+   ```bash
+   python statemachine_v2.py
+   ```
+
+### External Frame Input
+
+The `statemachine_v2.py` script expects frames to be provided by an external application. The external application should send frames to the state machine in real-time or batch mode. The state machine processes each frame and performs object tracking and detection.
+
+Example workflow:
+1. The external application captures or generates frames.
+2. Frames are passed to the `statemachine_v2.py` script via a predefined interface (e.g., function calls, sockets, or shared memory).
+3. The state machine processes each frame and transitions between states based on the analysis of the frame.
+
+This design allows for greater flexibility and integration with other systems that handle frame acquisition and preprocessing.
+
 ## Usage
 
 1. Clone the repository.
