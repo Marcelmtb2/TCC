@@ -54,6 +54,41 @@ This module implements a state machine for object tracking using background subt
 - **trigger_timeout**: Transition to Workplace_blocked state from various states.
 - **trigger_terminate**: Transition to Stop state from any state.
 
+## Usage
+
+1. Clone the repository.
+2. Ensure you have Miniconda installed. Create and activate the environment using the `environment.yml` file:
+   ```bash
+   conda env create -f environment.yml
+   conda activate cme
+   ```
+3. There is a private directory on OneDrive with the videos used to test and validate code. Copy the two videos and the directory "videosMock" into a folder named "video" at the same directory level as the python scripts.
+4. Run the `statemachine.py` script to start the object tracking state machine.
+   ```bash
+   python statemachine.py
+   ```
+
+## CLI Usage
+
+The `statemachine.py` script includes a simple command-line interface (CLI) to select the video source for object tracking. When you run the script, you will be prompted to choose a video file from the list or use the live camera feed.
+
+1. After running the script, you will see a list of available video files.
+2. Enter the number corresponding to the video file you want to use, or enter `0` to use the live camera feed.
+3. The state machine will start and process the selected video or camera feed.
+
+Example:
+```bash
+python statemachine.py
+```
+```
+Video 1 - cabo luz off.mp4
+Video 2 - caixa clara movimento maos luz on.mp4
+...
+Choose a number between 1 and 22. Choose 0 for live camera feed: 1
+You chose: cabo luz off.mp4
+Relative path: video\videosMock\cabo luz off.mp4
+```
+
 ## V2 Files
 
 The v2 version of the system implements a similar state machine but is designed to work in scenarios where frames are provided externally, rather than being captured directly from a camera or video file. This allows integration with external applications that handle frame acquisition and preprocessing.
@@ -112,38 +147,3 @@ Example workflow:
 3. The state machine processes each frame and transitions between states based on the analysis of the frame.
 
 This design allows for greater flexibility and integration with other systems that handle frame acquisition and preprocessing.
-
-## Usage
-
-1. Clone the repository.
-2. Ensure you have Miniconda installed. Create and activate the environment using the `environment.yml` file:
-   ```bash
-   conda env create -f environment.yml
-   conda activate cme
-   ```
-3. There is a private directory on OneDrive with the videos used to test and validate code. Copy the two videos and the directory "videosMock" into a folder named "video" at the same directory level as the python scripts.
-4. Run the `statemachine.py` script to start the object tracking state machine.
-   ```bash
-   python statemachine.py
-   ```
-
-## CLI Usage
-
-The `statemachine.py` script includes a simple command-line interface (CLI) to select the video source for object tracking. When you run the script, you will be prompted to choose a video file from the list or use the live camera feed.
-
-1. After running the script, you will see a list of available video files.
-2. Enter the number corresponding to the video file you want to use, or enter `0` to use the live camera feed.
-3. The state machine will start and process the selected video or camera feed.
-
-Example:
-```bash
-python statemachine.py
-```
-```
-Video 1 - cabo luz off.mp4
-Video 2 - caixa clara movimento maos luz on.mp4
-...
-Choose a number between 1 and 22. Choose 0 for live camera feed: 1
-You chose: cabo luz off.mp4
-Relative path: video\videosMock\cabo luz off.mp4
-```
